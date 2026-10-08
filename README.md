@@ -104,10 +104,14 @@ flutter config --jdk-dir="C:\Program Files\Java\jdk-21"
 ### ٤. الفحص
 
 ```bash
-cd tools && python 06_smoke_test.py    # 29 فحصاً من طرف لطرف
+cd tools && python 06_smoke_test.py    # 33 فحصاً من طرف لطرف
 cd tools && python -m pytest tests/    # 45 اختبار منطق
-cd app   && flutter test               # 54 اختبار دارت
+cd app   && flutter test               # 67 اختبار دارت
 ```
+
+فحص السلسلة يمسك أشياء لا تظهر إلا على الجهاز: طبقة في النمط تشير لمصدر
+غير موجود فتبقى فارغة، ونصّ يطلب حزمة خط غير مشحونة فيختفي، وقطعة من
+سلسلة الإغلاقات مقطوعة. ولا واحد منها يرمي خطأ.
 
 ---
 

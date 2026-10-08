@@ -27,7 +27,7 @@ import requests
 
 from config import (
     API_URL, VALHALLA_URL, TILES_DIR, POI_DB, SAMPLE_NAME, MAP_START_CENTER,
-    TILE_MAX_ZOOM, REPORT_TYPES, TRACE_TRIM_ENDPOINTS_M,
+    TILE_MAX_ZOOM, REPORT_TYPES, TRACE_TRIM_ENDPOINTS_M, REPO_DIR,
 )
 
 # نقاط بغدادية حقيقية نستخدمها في كل الفحوص
@@ -90,6 +90,82 @@ def check_tiles() -> None:
         die("بلاطة ساحة التحرير", f"مفقودة في z{TILE_MAX_ZOOM}")
     ok("بلاطة ساحة التحرير", f"{row[0] / 1024:.1f}KB في z{TILE_MAX_ZOOM}")
     con.close()
+
+
+# ── ١ب. النمط ──────────────────────────────────────────────────────────────
+
+def check_style() -> None:
+    """يطابق نمط الخريطة مع البلاطات والخطوط الموجودة فعلاً.
+
+    ليش هذا الفحص: ثلاثة أخطاء لا تُكتشف إلا على الجهاز وتظهر كخريطة
+    «تشتغل» وهي ناقصة — طبقة تشير لـsource-layer غير موجود فتبقى فارغة،
+    ونصّ يطلب حزمة خط ما شحنّاها فيختفي، وعلامة {{TILE_BASE}} تبقى في
+    النمط فما تُحمَّل أي بلاطة. ولا واحد منها يرمي خطأ.
+    """
+    style_path = (REPO_DIR / "app" / "assets" / "style" / "darb-day.json")
+    if not style_path.exists():
+        die("النمط", f"{style_path} غير موجود")
+
+    style = json.loads(style_path.read_text(encoding="utf-8"))
+
+    # العلامة لازم تكون موجودة: السيرفر يزرع مكانها عنوانه وقت التشغيل
+    raw = style_path.read_text(encoding="utf-8")
+    if "{{TILE_BASE}}" not in raw:
+        die("علامة النمط", "{{TILE_BASE}} مفقودة — النمط فيه عنوان مكتوب "
+                           "بيده، والمنفذ عشوائي فما راح يطابقه")
+
+    # طبقات البلاطات الموجودة فعلاً
+    tiles_db = TILES_DIR / f"{SAMPLE_NAME}.mbtiles"
+    con = sqlite3.connect(tiles_db)
+    meta_json = con.execute(
+        "SELECT value FROM metadata WHERE name='json'").fetchone()[0]
+    con.close()
+    available = {L["id"] for L in json.loads(meta_json)["vector_layers"]}
+
+    used_layers = {l["source-layer"] for l in style["layers"]
+                   if "source-layer" in l}
+    missing = used_layers - available
+    if missing:
+        die("طبقات النمط",
+            f"النمط يشير لطبقات غير موجودة في البلاطات: {sorted(missing)}")
+    ok("طبقات النمط", f"{len(used_layers)} طبقة كلها موجودة في البلاطات")
+
+    # طبقات موجودة وما نستخدمها: ليس خطأً، لكنه يعني تفاصيل مبنيّة
+    # وغير معروضة — بلاطات أكبر بلا فائدة
+    unused = available - used_layers
+    if unused:
+        warn("طبقات غير مستخدمة",
+             f"مبنيّة في البلاطات وما يرسمها النمط: {sorted(unused)}")
+
+    # حزم الخطوط التي يطلبها النمط لازم تكون مشحونة
+    fonts_dir = REPO_DIR / "app" / "assets" / "fonts"
+    wanted: set[str] = set()
+    for layer in style["layers"]:
+        for font in (layer.get("layout", {}) or {}).get("text-font", []):
+            wanted.add(font)
+
+    for font in sorted(wanted):
+        arabic = fonts_dir / font / "1536-1791.pbf"
+        if not arabic.exists():
+            die("خطوط النمط",
+                f"النمط يطلب «{font}» وما شحنّا نطاق العربية له — "
+                f"الكتابة العربية راح تختفي من الخريطة.\n"
+                f"    عدّل _STACKS في 05_fetch_fonts.py وأعد تشغيله")
+        ok(f"خط «{font}»", f"العربية {arabic.stat().st_size / 1024:.0f}KB")
+
+    # الأسماء العربية: كل طبقة نصّ لازم تفضّل name:ar
+    text_layers = [l for l in style["layers"] if l.get("type") == "symbol"]
+    without_ar = [
+        l["id"] for l in text_layers
+        if "name:ar" not in json.dumps(
+            (l.get("layout", {}) or {}).get("text-field", ""),
+            ensure_ascii=False)
+    ]
+    if without_ar:
+        warn("أسماء غير معرَّبة",
+             f"طبقات نصّ ما تفضّل name:ar: {without_ar}")
+    else:
+        ok("تعريب الأسماء", f"{len(text_layers)} طبقة نصّ كلها تفضّل name:ar")
 
 
 # ── ٢. البحث ───────────────────────────────────────────────────────────────
@@ -479,6 +555,9 @@ def main() -> None:
 
     print("\n١. البلاطات")
     check_tiles()
+
+    print("\n١ب. نمط الخريطة")
+    check_style()
 
     print("\n٢. البحث المحلي")
     check_search()

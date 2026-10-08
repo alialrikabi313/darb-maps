@@ -442,6 +442,24 @@
       }
     },
     {
+      "id": "aerodrome-label",
+      "type": "symbol",
+      "source": "darb",
+      "source-layer": "aerodrome_label",
+      "minzoom": 10,
+      "layout": {
+        "text-field": ["coalesce", ["get", "name:ar"], ["get", "name"]],
+        "text-font": ["Noto Sans Bold"],
+        "text-size": ["interpolate", ["linear"], ["zoom"], 10, 11, 14, 15],
+        "text-max-width": 9
+      },
+      "paint": {
+        "text-color": "#3F4A56",
+        "text-halo-color": "#FFFFFF",
+        "text-halo-width": 2
+      }
+    },
+    {
       "id": "place-label-city",
       "type": "symbol",
       "source": "darb",
