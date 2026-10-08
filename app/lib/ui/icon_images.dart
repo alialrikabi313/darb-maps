@@ -19,9 +19,33 @@ import '../reports/reports.dart';
 /// اسم الصورة في النمط لنوع بلاغ.
 String reportImageName(String kind) => 'darb-report-$kind';
 
-const String carImageName = 'darb-car';
+/// اسم الصورة لدبّوس نقطة اهتمام حسب تصنيفها.
+String poiImageName(String category) => 'darb-poi-$category';
 
-/// يسجّل صور كل أنواع البلاغات وسهم السيارة في النمط.
+const String carImageName = 'darb-car';
+const String destImageName = 'darb-dest';
+
+/// أيقونة كل تصنيف نقاط اهتمام — نفس أيقونات شرائح الاستكشاف.
+const Map<String, IconData> _poiIcons = {
+  'restaurant': Icons.restaurant,
+  'cafe': Icons.local_cafe,
+  'pharmacy': Icons.local_pharmacy,
+  'fuel': Icons.local_gas_station,
+  'hospital': Icons.local_hospital,
+  'mosque': Icons.mosque,
+  'market': Icons.shopping_bag,
+  'school': Icons.school,
+  'university': Icons.school,
+  'bank': Icons.account_balance,
+  'hotel': Icons.hotel,
+  'park': Icons.park,
+  'government': Icons.account_balance_outlined,
+  'transport': Icons.directions_bus,
+  'place': Icons.location_city,
+  'street': Icons.add_road,
+};
+
+/// يسجّل كل صور الخريطة في النمط.
 ///
 /// تُنادى بعد onStyleLoaded وقبل إضافة أي symbol: الرمز الذي يشير لصورة
 /// غير مسجّلة لا يُرسم ولا يرمي خطأ، فتختفي العلامات بصمت.
@@ -33,7 +57,18 @@ Future<void> registerMapImages(
     await c.addImage(reportImageName(kind), bytes);
   }
 
+  // دبابيس نقاط الاهتمام: بيضاء بأيقونة داكنة — كما في التصميم، تختلف
+  // عن دبابيس البلاغات الملوّنة فلا يخلطها المستخدم
+  for (final e in _poiIcons.entries) {
+    await c.addImage(
+      poiImageName(e.key),
+      await _renderPin(e.value, Colors.white, devicePixelRatio,
+          iconColor: const Color(0xFF0F1A16)),
+    );
+  }
+
   await c.addImage(carImageName, await _renderCar(devicePixelRatio));
+  await c.addImage(destImageName, await _renderDestination(devicePixelRatio));
 }
 
 /// يرسم دبّوساً: دائرة ملوّنة بحاشية بيضاء وذيل، والأيقونة في وسطها.
@@ -41,7 +76,8 @@ Future<void> registerMapImages(
 /// الحاشية البيضاء ليست تجميلاً: الخريطة فيها مناطق فاتحة وغامقة، وبلاها
 /// يختفي الدبّوس الأحمر على مبنى أحمر.
 Future<Uint8List> _renderPin(
-    IconData icon, Color color, double dpr) async {
+    IconData icon, Color color, double dpr,
+    {Color iconColor = Colors.white}) async {
   // 44 منطقي — الحجم المريح للمس. نضربه في كثافة الشاشة كي لا يظهر مهشّماً
   const logical = 44.0;
   const tail = 10.0;
@@ -79,12 +115,41 @@ Future<Uint8List> _renderPin(
         fontSize: logical * 0.5,
         fontFamily: icon.fontFamily,
         package: icon.fontPackage,
-        color: Colors.white,
+        color: iconColor,
       ),
     ),
     textDirection: TextDirection.ltr,
   )..layout();
   tp.paint(canvas, center - Offset(tp.width / 2, tp.height / 2));
+
+  return _toPng(recorder, w, h);
+}
+
+/// علامة الوجهة: دائرة سوداء بحلقة بيضاء، كما في التصميم.
+Future<Uint8List> _renderDestination(double dpr) async {
+  const logical = 30.0;
+  const tail = 8.0;
+  final w = (logical * dpr).round();
+  final h = ((logical + tail) * dpr).round();
+
+  final recorder = ui.PictureRecorder();
+  final canvas = Canvas(recorder);
+  canvas.scale(dpr);
+
+  const r = logical / 2;
+  const c = Offset(r, r);
+
+  final tailPath = Path()
+    ..moveTo(r - 5, logical - 5)
+    ..lineTo(r, logical + tail - 1)
+    ..lineTo(r + 5, logical - 5)
+    ..close();
+
+  canvas.drawPath(tailPath, Paint()..color = Colors.white);
+  canvas.drawCircle(c, r - 1, Paint()..color = Colors.white);
+  canvas.drawPath(tailPath, Paint()..color = const Color(0xFF0C1512));
+  canvas.drawCircle(c, r - 4, Paint()..color = const Color(0xFF0C1512));
+  canvas.drawCircle(c, r - 10, Paint()..color = Colors.white);
 
   return _toPng(recorder, w, h);
 }

@@ -113,7 +113,7 @@ flutter config --jdk-dir="C:\Program Files\Java\jdk-21"
 ### ٤. الفحص
 
 ```bash
-cd tools && python 06_smoke_test.py    # 33 فحصاً من طرف لطرف
+cd tools && python 06_smoke_test.py    # 37 فحصاً من طرف لطرف
 cd tools && python -m pytest tests/    # 52 اختبار منطق وحزم
 cd app   && flutter test               # 67 اختبار دارت
 ```

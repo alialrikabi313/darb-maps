@@ -66,24 +66,29 @@ async def route(locations: list[dict], costing: str = "auto",
     return await _post("/route", body)
 
 
-async def trace_attributes(shape: list[dict], costing: str = "auto") -> dict:
-    """يطابق مسار GPS على الطرق ويرجّع صفات كل قطعة.
+_TRACE_ATTRS = ["edge.way_id", "edge.length", "edge.speed",
+                "edge.speed_limit", "edge.road_class",
+                "edge.begin_shape_index", "edge.end_shape_index"]
 
-    هذا ما يحوّل قراءات GPS الخام إلى way_id فعلي — بلاه ما نعرف أي طريق
-    كان السائق عليه، ولا نقدر نحسب زحاماً لقطعة بعينها.
+
+async def trace_attributes(shape: list[dict], costing: str = "auto",
+                           timeout=None) -> dict:
+    """يطابق مساراً على الطرق ويرجّع صفات كل قطعة.
+
+    هذا ما يحوّل الإحداثيات الخام إلى way_id فعلي. نستخدمه لأمرين:
+      ١. قراءات سرعة المستخدمين → زحام لكل قطعة طريق
+      ٢. خط المسار المحسوب → معرّفات طرقه وحدود سرعتها
+
+    الثاني هو السبيل الوحيد لمعرفة way_id من مسار: /route ما يرجّعها.
     """
     body = {
         "shape": shape,
         "costing": costing,
         "shape_match": "map_snap",
-        "filters": {
-            "attributes": ["edge.way_id", "edge.length", "edge.speed",
-                           "edge.road_class", "edge.begin_shape_index",
-                           "edge.end_shape_index"],
-            "action": "include",
-        },
+        "filters": {"attributes": _TRACE_ATTRS, "action": "include"},
     }
-    return await _post("/trace_attributes", body, timeout=_TIMEOUT_LIVE)
+    return await _post("/trace_attributes", body,
+                       timeout=timeout or _TIMEOUT_LIVE)
 
 
 async def locate(lat: float, lon: float) -> dict:

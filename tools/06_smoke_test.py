@@ -468,12 +468,33 @@ def check_routing(ctx: dict) -> None:
             ok("تجنّب الإغلاق",
                f"المسار يبتعد {nearest:.0f}م عن نقطة الإغلاق")
 
-    # الزحام: نتوقّع available=false لأن ما عندنا قراءات. الصراحة هنا
-    # مقصودة — خط ملوّن بتخمين أسوأ من خط بلا لون
+    # معرّفات الطرق: بلاها ما في تلوين زحام ولا حدّ سرعة. نفحصها صراحةً
+    # لأن غيابها يمرّ صامتاً — المسار يشتغل والميزتان تختفيان
+    maneuvers = trip["legs"][0]["maneuvers"]
+    with_ways = [m for m in maneuvers if m.get("way_ids")]
+    if not with_ways:
+        die("معرّفات طرق المسار",
+            "ولا مناورة فيها way_ids — مطابقة المسار على الطرق فشلت، "
+            "فما راح يشتغل تلوين الزحام ولا حدّ السرعة")
+    ok("معرّفات طرق المسار",
+       f"{len(with_ways)}/{len(maneuvers)} مناورة")
+
+    with_limit = [m for m in maneuvers if m.get("speed_limit")]
+    if with_limit:
+        ok("حدود السرعة",
+           f"{len(with_limit)}/{len(maneuvers)} مناورة — "
+           f"{sorted({int(m['speed_limit']) for m in with_limit})} كم/س")
+    else:
+        # ناقصة في أكثر طرق العراق. ما نموت عليها — نعرضها حين توجد
+        warn("حدود السرعة", "ما في maxspeed على هذا المسار في OSM")
+
     traffic = trip.get("traffic", {})
     if traffic.get("available"):
-        ok("الزحام على المسار", f"تغطية {traffic['coverage']}")
+        ok("الزحام على المسار",
+           f"تغطية {int(traffic['coverage'] * 100)}%، "
+           f"أضاف {traffic['added_seconds']}s")
     else:
+        # الصراحة مقصودة — خط ملوّن بتخمين أسوأ من خط بلا لون
         ok("إعلان غياب الزحام",
            f"«{traffic.get('reason', '؟')}» — صريح لا مخمَّن")
 
@@ -518,10 +539,51 @@ def check_traffic() -> None:
             f"{TRACE_TRIM_ENDPOINTS_M}م كلها «قرب البيت»")
     ok("قصّ أطراف الرحلة", "الرحلة القصيرة تُحذف كاملة")
 
-    # التجميع: قراءة واحدة ما تعلن زحاماً (العتبة TRAFFIC_MIN_SAMPLES)
+    # التجميع ثم التلوين: نرسل رحلة بطيئة مراراً لنتجاوز عتبة
+    # TRAFFIC_MIN_SAMPLES، ثم نتأكد أن المسار يتلوّن فعلاً ويرتفع زمنه.
+    # بلا هذا كان الفحص يمرّ على حالة «ما عندنا قراءات» ولا يختبر الميزة
+    slow = [{"lat": la, "lon": lo, "time": now + i * 4 + 900,
+             "speed_kmh": 8.0}
+            for i, (la, lo) in enumerate(pts[:80])]
+    for _ in range(3):
+        requests.post(f"{API_URL}/traffic/trace", json={"points": slow},
+                      timeout=30)
+
     agg = requests.post(f"{API_URL}/traffic/aggregate", timeout=20).json()
     ok("تجميع الزحام",
        f"حدّثنا {agg['updated']} قطعة، نسينا {agg['forgotten']}")
+
+    if agg["updated"] == 0:
+        warn("تلوين المسار", "ما تجمّعت قطع — نتخطّى فحص التلوين")
+        return
+
+    colored = requests.post(f"{API_URL}/route", json={
+        "locations": [{"lat": _TAHRIR[0], "lon": _TAHRIR[1]},
+                      {"lat": _MANSOUR[0], "lon": _MANSOUR[1]}],
+        "alternates": 0}, timeout=40).json()["trip"]
+
+    traffic = colored.get("traffic", {})
+    if not traffic.get("available"):
+        die("تلوين المسار بالزحام",
+            f"جمّعنا {agg['updated']} قطعة والمسار يقول "
+            f"«{traffic.get('reason')}» — السلسلة مقطوعة بين "
+            f"traffic_state ومعرّفات طرق المسار")
+
+    levels = [m.get("traffic_level")
+              for m in colored["legs"][0]["maneuvers"]
+              if m.get("traffic_level")]
+    base = colored["summary"]["time"]
+    withjam = colored["summary"].get("time_with_traffic", base)
+
+    if withjam <= base:
+        die("تصحيح الـETA",
+            f"المسار ملوّن بـ{levels} والزمن ما تغيّر ({base}s)")
+
+    ok("تلوين المسار بالزحام",
+       f"{len(levels)} مناورة ملوّنة، تغطية "
+       f"{int(traffic['coverage'] * 100)}%")
+    ok("تصحيح الـETA بالزحام",
+       f"{round(base / 60)} دقيقة → {round(withjam / 60)} دقيقة")
 
 
 def _decode_all(enc: str) -> list[tuple[float, float]]:

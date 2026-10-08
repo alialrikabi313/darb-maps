@@ -48,6 +48,10 @@ class NavState {
   final bool offRoute;
   final String? notice;
 
+  /// حدّ السرعة على المناورة التي نحن فيها. null يعني أن OSM ما يحمله —
+  /// والواجهة تخفي اللوحة بدل ما تعرض رقماً مخمَّناً
+  double? get speedLimitKmh => current?.speedLimitKmh;
+
   const NavState({
     this.phase = NavPhase.idle,
     this.route,

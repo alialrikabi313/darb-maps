@@ -77,6 +77,10 @@ class Maneuver {
   /// حالة الزحام على هذه المناورة إن عرفها الباكند.
   final String? trafficLevel;
 
+  /// حدّ السرعة كم/س إن كان في OSM. غائب عن أكثر طرق العراق — نعرضه
+  /// حين يوجد ولا نخمّنه، لأن حدّاً خاطئاً معروضاً أسوأ من لا حدّ.
+  final double? speedLimitKmh;
+
   /// نقاط هذه المناورة من خط المسار — تُحسب مرة عند البناء.
   final List<LatLng> shape;
 
@@ -99,6 +103,7 @@ class Maneuver {
     required this.trafficLevel,
     required this.shape,
     required this.startOffsetM,
+    this.speedLimitKmh,
   });
 
   double get lengthM => lengthKm * 1000.0;
@@ -149,6 +154,7 @@ class Maneuver {
       bearingBefore: (j['bearing_before'] as num?)?.toDouble(),
       bearingAfter: (j['bearing_after'] as num?)?.toDouble(),
       trafficLevel: j['traffic_level'] as String?,
+      speedLimitKmh: (j['speed_limit'] as num?)?.toDouble(),
       shape: routeShape.isEmpty
           ? const []
           : routeShape.sublist(
@@ -192,6 +198,11 @@ class NavRoute {
   }) : totalLengthM = lineLength(shape);
 
   double get effectiveTimeS => timeWithTrafficS ?? timeS;
+
+  /// الثواني التي أضافها الزحام. صفر يعني مساراً سالكاً أو بلا قراءات —
+  /// ترتيب المسارات بها يميّز «أقل ازدحاماً» عن «الأسرع».
+  double get trafficPenaltyS =>
+      timeWithTrafficS == null ? 0 : (timeWithTrafficS! - timeS);
 
   LatLng get destination => shape.isEmpty
       ? const LatLng(0, 0)

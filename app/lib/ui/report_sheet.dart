@@ -1,6 +1,6 @@
-// شاشة الإبلاغ الكاملة من وضع الاستكشاف: اختيار النوع وملاحظة اختيارية.
+// ورقة الإبلاغ الكاملة: اختيار النوع وملاحظة اختيارية.
 //
-// الإبلاغ السريع أثناء الملاحة شبكة لمسة واحدة في nav_overlay — هذي
+// الإبلاغ السريع أثناء الملاحة شبكة لمسة واحدة في nav_overlay. هذي
 // للحالة التي يكون فيها المستخدم واقفاً ويبي يكتب تفصيلاً.
 
 import 'package:flutter/material.dart';
@@ -8,6 +8,8 @@ import 'package:provider/provider.dart';
 
 import '../reports/reports.dart';
 import '../state/app_state.dart';
+import 'nav_overlay.dart' show ReportTypeTile, showDarbSnack;
+import 'theme.dart';
 
 class ReportSheet extends StatefulWidget {
   const ReportSheet({super.key});
@@ -38,11 +40,8 @@ class _ReportSheetState extends State<ReportSheet> {
 
     setState(() => _sending = false);
     Navigator.of(context).pop();
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(err ?? 'شكراً — وصل بلاغك وصار يشوفه غيرك'),
-      backgroundColor:
-          err == null ? const Color(0xFF2BB673) : const Color(0xFFD6333F),
-    ));
+    showDarbSnack(context, err ?? 'شكراً — وصل بلاغك وصار يشوفه غيرك',
+        isError: err != null);
   }
 
   @override
@@ -52,51 +51,39 @@ class _ReportSheetState extends State<ReportSheet> {
 
     return Padding(
       // الإزاحة بارتفاع لوحة المفاتيح: بلاها تغطّي حقل الملاحظة
-      padding: EdgeInsets.only(
-          bottom: MediaQuery.of(context).viewInsets.bottom),
+      padding:
+          EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
       child: Container(
         decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          color: D.card,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(D.rSheet)),
         ),
-        padding: const EdgeInsets.fromLTRB(16, 14, 16, 24),
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 26),
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Center(
-                child: Container(
-                  width: 44, height: 4,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFD1D5DB),
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 14),
-              const Text('أبلِغ عن شي على الطريق',
-                  style: TextStyle(fontSize: 19, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 4),
-              Text(
-                'بلاغك يصل للسائقين اللي وراك. موقعك يُرسَل مع البلاغ، '
-                'وبلا هويتك.',
-                style: const TextStyle(
-                    fontSize: 12, color: Color(0xFF6B7280), height: 1.4),
+              const DGrabber(),
+              const DSectionHeader(
+                title: 'الإبلاغ عن حادث أو حالة',
+                subtitle: 'موقعك يُرسَل مع البلاغ، وبلا هويتك',
+                icon: Icons.campaign_rounded,
               ),
               const SizedBox(height: 16),
 
               if (types.isEmpty)
-                Container(
+                DCard(
+                  color: const Color(0xFFFFF6E2),
+                  shadow: const [],
+                  radius: D.rInner,
                   padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFEF3C7),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
                   child: Text(
                     app.reports.lastError ??
                         'ما قدرنا نجيب أنواع البلاغات من السيرفر',
-                    style: const TextStyle(color: Color(0xFF78350F)),
+                    textAlign: TextAlign.right,
+                    style: const TextStyle(
+                        color: Color(0xFF7A5A14), height: 1.4, fontSize: 13),
                   ),
                 )
               else
@@ -105,11 +92,11 @@ class _ReportSheetState extends State<ReportSheet> {
                   crossAxisCount: 4,
                   mainAxisSpacing: 10,
                   crossAxisSpacing: 10,
-                  childAspectRatio: 0.82,
+                  childAspectRatio: 0.84,
                   physics: const NeverScrollableScrollPhysics(),
                   children: [
                     for (final t in types)
-                      _TypeTile(
+                      ReportTypeTile(
                         type: t,
                         selected: _kind == t.kind,
                         onTap: () => setState(() => _kind = t.kind),
@@ -118,37 +105,34 @@ class _ReportSheetState extends State<ReportSheet> {
                 ),
 
               if (_kind != null) ...[
-                const SizedBox(height: 14),
-                TextField(
-                  controller: _note,
-                  maxLength: 280,
-                  maxLines: 2,
-                  decoration: const InputDecoration(
-                    labelText: 'ملاحظة (اختيارية)',
-                    hintText: 'مثلاً: الحادث على المسار الأيمن',
-                    border: OutlineInputBorder(),
+                const SizedBox(height: 16),
+                DCard(
+                  color: D.cardInner,
+                  shadow: const [],
+                  radius: D.rInner,
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 14, vertical: 4),
+                  child: TextField(
+                    controller: _note,
+                    maxLength: 280,
+                    maxLines: 2,
+                    textAlign: TextAlign.right,
+                    style: D.body,
+                    decoration: const InputDecoration(
+                      hintText: 'ملاحظة اختيارية — مثلاً: على المسار الأيمن',
+                      hintStyle: TextStyle(color: D.textSoft, fontSize: 13),
+                      border: InputBorder.none,
+                      counterText: '',
+                    ),
                   ),
                 ),
                 const SizedBox(height: 10),
                 _TtlNote(type: types.firstWhere((t) => t.kind == _kind)),
-                const SizedBox(height: 12),
-                SizedBox(
-                  width: double.infinity,
-                  child: FilledButton(
-                    onPressed: _sending ? null : _send,
-                    style: FilledButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 15),
-                      backgroundColor: const Color(0xFFF2A33C),
-                    ),
-                    child: _sending
-                        ? const SizedBox(
-                            width: 20, height: 20,
-                            child: CircularProgressIndicator(
-                                strokeWidth: 2, color: Colors.white))
-                        : const Text('أرسل البلاغ',
-                            style: TextStyle(
-                                fontSize: 17, fontWeight: FontWeight.bold)),
-                  ),
+                const SizedBox(height: 14),
+                DBigButton(
+                  label: _sending ? 'نرسل…' : 'أرسل البلاغ',
+                  icon: _sending ? null : Icons.send,
+                  onTap: _sending ? null : _send,
                 ),
               ],
             ],
@@ -161,8 +145,8 @@ class _ReportSheetState extends State<ReportSheet> {
 
 /// يقول للمستخدم كم يعيش بلاغه وكم صوتاً يحتاج.
 ///
-/// ليش نعرضها: المستخدم اللي يعرف أن بلاغ الرادار يعيش أسبوعاً وبلاغ
-/// الزحام 45 دقيقة يبلّغ بدقة أكثر، ويفهم ليش اختفى بلاغه.
+/// ليش نعرضها: من يعرف أن بلاغ الرادار يعيش أسبوعاً وبلاغ الزحام 45
+/// دقيقة يبلّغ بدقة أكثر، ويفهم ليش اختفى بلاغه.
 class _TtlNote extends StatelessWidget {
   final ReportType type;
   const _TtlNote({required this.type});
@@ -177,64 +161,19 @@ class _TtlNote extends StatelessWidget {
             : '$ttl دقيقة';
 
     return Row(
+      mainAxisAlignment: MainAxisAlignment.end,
       children: [
-        const Icon(Icons.schedule, size: 14, color: Color(0xFF6B7280)),
-        const SizedBox(width: 5),
-        Expanded(
+        Flexible(
           child: Text(
             'يعيش $life، ويصير «مؤكّداً» بعد ${type.votesToConfirm} '
             'تأكيدات من سائقين غيرك',
-            style: const TextStyle(fontSize: 11, color: Color(0xFF6B7280)),
+            textAlign: TextAlign.right,
+            style: D.caption,
           ),
         ),
+        const SizedBox(width: 5),
+        const Icon(Icons.schedule, size: 13, color: D.textSoft),
       ],
-    );
-  }
-}
-
-class _TypeTile extends StatelessWidget {
-  final ReportType type;
-  final bool selected;
-  final VoidCallback onTap;
-
-  const _TypeTile({
-    required this.type,
-    required this.selected,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final look = type.look;
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Container(
-            width: 52,
-            height: 52,
-            decoration: BoxDecoration(
-              color: look.color,
-              shape: BoxShape.circle,
-              border: selected
-                  ? Border.all(color: const Color(0xFF111827), width: 3)
-                  : null,
-            ),
-            child: Icon(look.icon, color: Colors.white, size: 26),
-          ),
-          const SizedBox(height: 6),
-          Text(type.label,
-              textAlign: TextAlign.center,
-              maxLines: 2,
-              style: TextStyle(
-                fontSize: 11,
-                height: 1.15,
-                fontWeight: selected ? FontWeight.bold : FontWeight.normal,
-              )),
-        ],
-      ),
     );
   }
 }

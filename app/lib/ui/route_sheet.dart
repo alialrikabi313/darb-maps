@@ -1,4 +1,11 @@
-// معاينة المسار قبل الانطلاق: الملخّص والبدائل وزرّ البدء.
+// ورقة خيارات الطريق قبل الانطلاق.
+//
+// مطابقة للمرئي: عنوان الوجهة، ثم بطاقة لكل مسار فيها وصفه («الأسرع»،
+// «أقل ازدحاماً») ومدته ومسافته وزرّ اختيار دائري، ثم زرّ أسود كبير.
+//
+// وصف المسار محسوب من أرقامه لا مُسمّى اعتباطاً: الأسرع هو الأقصر زمناً،
+// والأقصر هو الأقصر مسافةً، و«أقل ازدحاماً» للذي زحامه أخفّ. وإذا ما
+// اختلفت الأرقام ما نخترع وصفاً.
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -6,6 +13,7 @@ import 'package:provider/provider.dart';
 import '../nav/phrases.dart';
 import '../nav/route_model.dart';
 import '../state/app_state.dart';
+import 'theme.dart';
 
 class RouteSheet extends StatelessWidget {
   final VoidCallback onStart;
@@ -17,66 +25,78 @@ class RouteSheet extends StatelessWidget {
   Widget build(BuildContext context) {
     final app = context.watch<AppState>();
 
-    return Material(
-      elevation: 14,
-      color: Colors.white,
-      borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+    return Container(
+      decoration: const BoxDecoration(
+        color: D.card,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(D.rSheet)),
+        boxShadow: [
+          BoxShadow(color: Color(0x1A000000), blurRadius: 28,
+              offset: Offset(0, -6)),
+        ],
+      ),
       child: SafeArea(
         top: false,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
           child: Column(
             mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              const DGrabber(),
+
               Row(
                 children: [
-                  const Icon(Icons.place, color: Color(0xFFD6333F)),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      app.destination?.title ?? '',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                          fontSize: 17, fontWeight: FontWeight.bold),
-                    ),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.close),
-                    onPressed: onCancel,
+                  DMapButton(
+                    icon: Icons.close,
                     tooltip: 'إلغاء',
+                    onTap: onCancel,
+                    size: 36,
+                    background: D.cardInner,
                   ),
-                ],
-              ),
-              const SizedBox(height: 6),
-
-              if (app.routing)
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 22),
-                  child: Center(
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
+                  const Spacer(),
+                  Expanded(
+                    flex: 6,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
-                        SizedBox(
-                          width: 18, height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
+                        const Text('خيارات الطريق', style: D.h2),
+                        Text(
+                          'إلى ${app.destination?.title ?? ''}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: D.caption,
                         ),
-                        SizedBox(width: 12),
-                        Text('نحسب الطريق…'),
                       ],
                     ),
                   ),
-                )
+                  const SizedBox(width: 10),
+                  const DIconCircle(Icons.alt_route,
+                      size: 36, foreground: D.greenDeep),
+                ],
+              ),
+
+              const SizedBox(height: 14),
+
+              if (app.routing)
+                const _Loading()
               else if (app.routeError != null)
                 _ErrorBox(message: app.routeError!)
               else if (app.proposed != null)
-                _RouteBody(
-                  route: app.proposed!,
+                _Options(
+                  primary: app.proposed!,
                   alternates: app.alternates,
-                  onPickAlternate: app.pickAlternate,
-                  onStart: onStart,
+                  onPick: app.pickAlternate,
                 ),
+
+              if (!app.routing && app.proposed != null) ...[
+                const SizedBox(height: 14),
+                DBigButton(
+                  label: 'ابدأ الرحلة',
+                  subtitle: 'ابدأ رحلتك عبر ${app.destination?.title ?? ''}',
+                  icon: Icons.near_me,
+                  onTap: onStart,
+                ),
+              ],
             ],
           ),
         ),
@@ -85,157 +105,186 @@ class RouteSheet extends StatelessWidget {
   }
 }
 
-class _RouteBody extends StatelessWidget {
-  final NavRoute route;
+class _Options extends StatelessWidget {
+  final NavRoute primary;
   final List<NavRoute> alternates;
-  final void Function(int) onPickAlternate;
-  final VoidCallback onStart;
+  final void Function(int) onPick;
 
-  const _RouteBody({
-    required this.route,
+  const _Options({
+    required this.primary,
     required this.alternates,
-    required this.onPickAlternate,
-    required this.onStart,
+    required this.onPick,
   });
 
   @override
   Widget build(BuildContext context) {
-    final eta = DateTime.now()
-        .add(Duration(seconds: route.effectiveTimeS.round()));
+    final all = [primary, ...alternates];
+    final labels = _labelRoutes(all);
 
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.baseline,
-          textBaseline: TextBaseline.alphabetic,
-          children: [
-            Text(durationLabel(route.effectiveTimeS),
-                style: const TextStyle(
-                    fontSize: 28, fontWeight: FontWeight.bold,
-                    color: Color(0xFF111827))),
-            const SizedBox(width: 10),
-            Text('${route.lengthKm.toStringAsFixed(1)} كم',
-                style: const TextStyle(
-                    fontSize: 17, color: Color(0xFF6B7280))),
-            const Spacer(),
-            Text('الوصول ${arrivalLabel(eta)}',
-                style: const TextStyle(
-                    fontSize: 14, color: Color(0xFF6B7280))),
-          ],
-        ),
-
-        // حالة الزحام معلنة بصراحة: «ما عندنا قراءات» ليست عيباً نخفيه،
-        // وهي الحالة الغالبة قبل ما تكبر كتلة المستخدمين
-        Padding(
-          padding: const EdgeInsets.only(top: 6),
-          child: Wrap(
-            spacing: 8,
-            runSpacing: 4,
-            children: [
-              if (route.timeWithTrafficS != null &&
-                  route.trafficCoverage > 0)
-                _Tag(
-                  icon: Icons.traffic,
-                  text: 'الزحام محسوب على '
-                      '${(route.trafficCoverage * 100).round()}% من الطريق',
-                  color: const Color(0xFFF07B2B),
-                )
-              else
-                const _Tag(
-                  icon: Icons.info_outline,
-                  text: 'بلا بيانات زحام — الزمن تقديري',
-                  color: Color(0xFF6B7280),
-                ),
-              if (route.closuresAvoided > 0)
-                _Tag(
-                  icon: Icons.block,
-                  text: 'تجنّبنا ${route.closuresAvoided} إغلاقاً مبلَّغاً',
-                  color: const Color(0xFFB91C1C),
-                ),
-            ],
-          ),
-        ),
-
-        if (alternates.isNotEmpty) ...[
-          const SizedBox(height: 10),
-          const Text('طرق بديلة',
-              style: TextStyle(
-                  fontSize: 13, fontWeight: FontWeight.bold,
-                  color: Color(0xFF6B7280))),
-          const SizedBox(height: 6),
-          SizedBox(
-            height: 46,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              itemCount: alternates.length,
-              separatorBuilder: (_, _) => const SizedBox(width: 8),
-              itemBuilder: (_, i) {
-                final a = alternates[i];
-                final diff = a.effectiveTimeS - route.effectiveTimeS;
-                return OutlinedButton(
-                  onPressed: () => onPickAlternate(i),
-                  child: Row(
-                    children: [
-                      Text(durationLabel(a.effectiveTimeS)),
-                      const SizedBox(width: 6),
-                      Text(
-                        diff >= 0
-                            ? '+${(diff / 60).round()}د'
-                            : '${(diff / 60).round()}د',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: diff > 0
-                              ? const Color(0xFFD6333F)
-                              : const Color(0xFF2BB673),
-                        ),
-                      ),
-                    ],
-                  ),
-                );
-              },
-            ),
+        for (var i = 0; i < all.length; i++) ...[
+          if (i > 0) const SizedBox(height: 8),
+          _RouteOption(
+            route: all[i],
+            label: labels[i].$1,
+            note: labels[i].$2,
+            icon: labels[i].$3,
+            selected: i == 0,
+            // الأساسي هو الأول دائماً؛ اختيار بديل يبدّله فيصير أولاً
+            onTap: i == 0 ? null : () => onPick(i - 1),
           ),
         ],
-
-        const SizedBox(height: 14),
-        SizedBox(
-          width: double.infinity,
-          child: FilledButton.icon(
-            onPressed: onStart,
-            style: FilledButton.styleFrom(
-              backgroundColor: const Color(0xFF2BB673),
-              padding: const EdgeInsets.symmetric(vertical: 16),
-            ),
-            icon: const Icon(Icons.navigation),
-            label: const Text('انطلق',
-                style: TextStyle(
-                    fontSize: 18, fontWeight: FontWeight.bold)),
-          ),
-        ),
       ],
+    );
+  }
+
+  /// يصف كل مسار من أرقامه. الأوصاف تُشتقّ لا تُفترض.
+  static List<(String, String, IconData)> _labelRoutes(List<NavRoute> rs) {
+    if (rs.length == 1) {
+      return [('الطريق المقترح', 'أفضل ما وجدناه', Icons.bolt)];
+    }
+
+    var fastest = 0, shortest = 0, smoothest = 0;
+    for (var i = 1; i < rs.length; i++) {
+      if (rs[i].effectiveTimeS < rs[fastest].effectiveTimeS) fastest = i;
+      if (rs[i].lengthKm < rs[shortest].lengthKm) shortest = i;
+      if (rs[i].trafficPenaltyS < rs[smoothest].trafficPenaltyS) {
+        smoothest = i;
+      }
+    }
+
+    final out = <(String, String, IconData)>[];
+    for (var i = 0; i < rs.length; i++) {
+      if (i == fastest) {
+        out.add(('الأسرع',
+            'الوصول المتوقّع ${arrivalLabel(DateTime.now().add(Duration(seconds: rs[i].effectiveTimeS.round())))}',
+            Icons.bolt));
+      } else if (i == smoothest && rs[i].trafficPenaltyS > 0) {
+        out.add(('أقل ازدحاماً', 'طريق أكثر انسيابية الآن', Icons.waves));
+      } else if (i == shortest) {
+        out.add(('الأقصر', 'مسافة أقل مع بعض الازدحام', Icons.straighten));
+      } else {
+        out.add(('طريق بديل', 'عبر طريق آخر', Icons.alt_route));
+      }
+    }
+    return out;
+  }
+}
+
+class _RouteOption extends StatelessWidget {
+  final NavRoute route;
+  final String label;
+  final String note;
+  final IconData icon;
+  final bool selected;
+  final VoidCallback? onTap;
+
+  const _RouteOption({
+    required this.route,
+    required this.label,
+    required this.note,
+    required this.icon,
+    required this.selected,
+    this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return DCard(
+      color: selected ? D.mintPale : D.cardInner,
+      shadow: const [],
+      radius: D.rInner,
+      border: selected ? Border.all(color: D.mint, width: 2) : null,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      onTap: onTap,
+      child: Row(
+        children: [
+          // زرّ الاختيار على اليسار — كما في التصميم
+          Container(
+            width: 24,
+            height: 24,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: selected ? D.green : Colors.transparent,
+              border: Border.all(
+                  color: selected ? D.green : D.divider, width: 2),
+            ),
+            child: selected
+                ? const Center(
+                    child: Icon(Icons.circle, size: 8, color: Colors.white))
+                : null,
+          ),
+
+          const SizedBox(width: 12),
+
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(durationLabel(route.effectiveTimeS),
+                  style: D.num2.copyWith(fontSize: 19)),
+              Row(
+                children: [
+                  Text('${route.lengthKm.toStringAsFixed(1)} كم',
+                      style: D.caption),
+                  const SizedBox(width: 4),
+                  const Icon(Icons.straighten, size: 12, color: D.textSoft),
+                ],
+              ),
+            ],
+          ),
+
+          const Spacer(),
+
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Row(
+                children: [
+                  Text(label, style: D.h3),
+                  const SizedBox(width: 6),
+                  Icon(icon, size: 16, color: D.green),
+                ],
+              ),
+              const SizedBox(height: 2),
+              SizedBox(
+                width: MediaQuery.of(context).size.width * 0.42,
+                child: Text(note,
+                    textAlign: TextAlign.right,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: D.caption),
+              ),
+              if (route.closuresAvoided > 0)
+                Text('تجنّبنا ${route.closuresAvoided} إغلاقاً',
+                    style: D.caption.copyWith(color: D.danger)),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }
 
-class _Tag extends StatelessWidget {
-  final IconData icon;
-  final String text;
-  final Color color;
-
-  const _Tag({required this.icon, required this.text, required this.color});
+class _Loading extends StatelessWidget {
+  const _Loading();
 
   @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, size: 14, color: color),
-        const SizedBox(width: 4),
-        Text(text, style: TextStyle(fontSize: 12, color: color)),
-      ],
-    );
-  }
+  Widget build(BuildContext context) => const Padding(
+        padding: EdgeInsets.symmetric(vertical: 26),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(
+                    strokeWidth: 2.2, color: D.green)),
+            SizedBox(width: 12),
+            Text('نحسب أفضل طريق…', style: D.bodySoft),
+          ],
+        ),
+      );
 }
 
 class _ErrorBox extends StatelessWidget {
@@ -244,22 +293,21 @@ class _ErrorBox extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
+    return DCard(
+      color: const Color(0xFFFDECEC),
+      shadow: const [],
+      radius: D.rInner,
       padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: const Color(0xFFFEE2E2),
-        borderRadius: BorderRadius.circular(10),
-      ),
       child: Row(
         children: [
-          const Icon(Icons.error_outline, color: Color(0xFFB91C1C)),
-          const SizedBox(width: 10),
           Expanded(
             child: Text(message,
+                textAlign: TextAlign.right,
                 style: const TextStyle(
-                    color: Color(0xFF7F1D1D), height: 1.4)),
+                    color: Color(0xFF8E2121), height: 1.4, fontSize: 13)),
           ),
+          const SizedBox(width: 10),
+          const Icon(Icons.error_outline, color: D.danger),
         ],
       ),
     );

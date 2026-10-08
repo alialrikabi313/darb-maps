@@ -1,7 +1,7 @@
 // البحث عن وجهة.
 //
-// محلي بالكامل — يشتغل بلا شبكة. البحث يبدأ بعد حرفين وبتأخير قصير:
-// استعلام FTS على كل حرف يُحسّ تأخّراً في الكتابة على جهاز متوسط.
+// محلي بالكامل — يشتغل بلا شبكة. يبدأ بعد حرفين وبتأخير قصير: استعلام
+// FTS على كل حرف يُحسّ تأخّراً في الكتابة على جهاز متوسط.
 
 import 'dart:async';
 
@@ -9,19 +9,21 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../config.dart';
+import '../core/favorites.dart';
 import '../core/search.dart';
 import '../nav/phrases.dart';
 import '../state/app_state.dart';
+import 'place_card.dart';
+import 'theme.dart';
 
-/// تصنيفات الوصول السريع قبل ما يكتب المستخدم شيئاً.
-const _quickCategories = <String, (String, IconData)>{
-  'fuel': ('وقود', Icons.local_gas_station),
-  'hospital': ('مستشفى', Icons.local_hospital),
-  'pharmacy': ('صيدلية', Icons.medical_services),
-  'restaurant': ('مطعم', Icons.restaurant),
-  'market': ('سوق', Icons.shopping_cart),
-  'mosque': ('جامع', Icons.mosque),
-};
+const _quickCategories = <(String, String, IconData)>[
+  ('fuel', 'وقود', Icons.local_gas_station),
+  ('hospital', 'مستشفى', Icons.local_hospital),
+  ('pharmacy', 'صيدلية', Icons.local_pharmacy),
+  ('restaurant', 'مطعم', Icons.restaurant),
+  ('market', 'سوق', Icons.shopping_bag),
+  ('mosque', 'جامع', Icons.mosque),
+];
 
 class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key});
@@ -90,52 +92,88 @@ class _SearchScreenState extends State<SearchScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final pad = MediaQuery.of(context).padding;
+
     return Scaffold(
-      appBar: AppBar(
-        title: TextField(
-          controller: _controller,
-          autofocus: true,
-          textInputAction: TextInputAction.search,
-          onChanged: _onChanged,
-          decoration: const InputDecoration(
-            hintText: 'ابحث عن مكان أو شارع',
-            border: InputBorder.none,
-          ),
-          style: const TextStyle(fontSize: 17),
-        ),
-        actions: [
-          if (_controller.text.isNotEmpty)
-            IconButton(
-              icon: const Icon(Icons.clear),
-              onPressed: () {
-                _controller.clear();
-                _onChanged('');
-              },
-            ),
-        ],
-      ),
+      backgroundColor: D.bg,
       body: Column(
         children: [
-          SizedBox(
-            height: 54,
-            child: ListView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          Padding(
+            padding: EdgeInsets.fromLTRB(14, pad.top + 10, 14, 10),
+            child: Row(
               children: [
-                for (final e in _quickCategories.entries)
-                  Padding(
-                    padding: const EdgeInsets.only(left: 8),
-                    child: FilterChip(
-                      avatar: Icon(e.value.$2, size: 17),
-                      label: Text(e.value.$1),
-                      selected: _activeCategory == e.key,
-                      onSelected: (_) => _runCategory(e.key),
+                DMapButton(
+                  icon: Icons.arrow_forward,
+                  tooltip: 'رجوع',
+                  onTap: () => Navigator.of(context).pop(),
+                  size: 44,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: DCard(
+                    radius: D.rPill,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 14, vertical: 4),
+                    child: Row(
+                      children: [
+                        if (_controller.text.isNotEmpty)
+                          IconButton(
+                            icon: const Icon(Icons.close,
+                                size: 18, color: D.textSoft),
+                            onPressed: () {
+                              _controller.clear();
+                              _onChanged('');
+                            },
+                            visualDensity: VisualDensity.compact,
+                          ),
+                        Expanded(
+                          child: TextField(
+                            controller: _controller,
+                            autofocus: true,
+                            textInputAction: TextInputAction.search,
+                            onChanged: _onChanged,
+                            textAlign: TextAlign.right,
+                            style: D.body.copyWith(fontSize: 15),
+                            decoration: const InputDecoration(
+                              hintText: 'ابحث عن مكان أو شارع',
+                              hintStyle: TextStyle(
+                                  color: D.textSoft, fontSize: 15),
+                              border: InputBorder.none,
+                              isDense: true,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        const Icon(Icons.search,
+                            color: D.textSoft, size: 21),
+                      ],
                     ),
                   ),
+                ),
               ],
             ),
           ),
-          const Divider(height: 1),
+
+          SizedBox(
+            height: 46,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              itemCount: _quickCategories.length,
+              separatorBuilder: (_, _) => const SizedBox(width: 8),
+              itemBuilder: (_, i) {
+                final c = _quickCategories[i];
+                return DChip(
+                  label: c.$2,
+                  icon: c.$3,
+                  selected: _activeCategory == c.$1,
+                  onTap: () => _runCategory(c.$1),
+                );
+              },
+            ),
+          ),
+
+          const SizedBox(height: 8),
           Expanded(child: _body()),
         ],
       ),
@@ -144,67 +182,200 @@ class _SearchScreenState extends State<SearchScreen> {
 
   Widget _body() {
     if (_searching) {
-      return const Center(child: CircularProgressIndicator());
+      return const Center(child: CircularProgressIndicator(color: D.green));
     }
 
     if (_results.isEmpty) {
       final typed = _controller.text.trim().length >= Cfg.searchMinChars;
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(32),
-          child: Text(
-            typed
-                // نقول السبب المحتمل لا «لا نتائج» وبس: 8% فقط من طرق
-                // العراق مسمّاة في OSM، وهذا أرجح سبب الفشل
-                ? 'ما لقينا شي بهذا الاسم.\n\nجرّب اسم المنطقة أو معلماً '
-                    'قريباً — أسماء الشوارع ناقصة في خريطة العراق المفتوحة.'
-                : 'اكتب اسم مكان، أو اختر تصنيفاً من الأعلى',
-            textAlign: TextAlign.center,
-            style: const TextStyle(color: Color(0xFF6B7280), height: 1.5),
-          ),
-        ),
-      );
+      return typed ? const _NoResults() : const _SearchIdle();
     }
 
     return ListView.separated(
+      padding: const EdgeInsets.fromLTRB(14, 6, 14, 24),
       itemCount: _results.length,
-      separatorBuilder: (_, _) => const Divider(height: 1, indent: 64),
-      itemBuilder: (_, i) {
-        final p = _results[i];
-        return ListTile(
-          leading: CircleAvatar(
-            backgroundColor: const Color(0xFFE8EEF6),
-            child: Icon(_iconFor(p.category),
-                color: const Color(0xFF2D7FF9), size: 20),
-          ),
-          title: Text(p.title, maxLines: 1, overflow: TextOverflow.ellipsis),
-          subtitle: Text(
-            [
-              categoryLabels[p.category] ?? p.category,
-              if (p.distanceM != null) distanceLabel(p.distanceM!),
-              if (p.tags['addr:street'] != null) '${p.tags['addr:street']}',
-            ].join(' · '),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-          onTap: () =>
-              Navigator.of(context).pop(Destination(p.title, p.pos)),
-        );
-      },
+      separatorBuilder: (_, _) => const SizedBox(height: 8),
+      itemBuilder: (_, i) => _ResultRow(place: _results[i]),
     );
   }
+}
 
-  static IconData _iconFor(String category) =>
-      _quickCategories[category]?.$2 ??
-      switch (category) {
-        'place' => Icons.location_city,
-        'street' => Icons.add_road,
-        'school' || 'university' => Icons.school,
-        'bank' => Icons.account_balance,
-        'government' => Icons.account_balance_outlined,
-        'transport' => Icons.directions_bus,
-        'hotel' => Icons.hotel,
-        'park' => Icons.park,
-        _ => Icons.place,
-      };
+class _ResultRow extends StatelessWidget {
+  final Place place;
+  const _ResultRow({required this.place});
+
+  @override
+  Widget build(BuildContext context) {
+    final subtitle = [
+      categoryLabels[place.category] ?? place.category,
+      if (place.distanceM != null) distanceLabel(place.distanceM!),
+      if (place.tags['addr:street'] != null) '${place.tags['addr:street']}',
+    ].join(' · ');
+
+    return DCard(
+      radius: D.rInner,
+      shadow: D.shadowSoft,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+      onTap: () =>
+          Navigator.of(context).pop(Destination(place.title, place.pos)),
+      child: Row(
+        children: [
+          const Icon(Icons.chevron_left, color: D.textFaint),
+          const Spacer(),
+          Expanded(
+            flex: 6,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(place.title,
+                    textAlign: TextAlign.right,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: D.h3),
+                Text(subtitle,
+                    textAlign: TextAlign.right,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: D.caption),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          DIconCircle(placeIcon(place.category),
+              size: 42, foreground: D.greenDeep),
+        ],
+      ),
+    );
+  }
+}
+
+/// ما قبل الكتابة: المفضّلة والرحلات الأخيرة — اختصار لأغلب البحث.
+class _SearchIdle extends StatelessWidget {
+  const _SearchIdle();
+
+  @override
+  Widget build(BuildContext context) {
+    final app = context.watch<AppState>();
+    final home = app.favoriteFor(FavoriteKind.home);
+    final work = app.favoriteFor(FavoriteKind.work);
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(14, 6, 14, 24),
+      children: [
+        if (home != null || work != null) ...[
+          const DSectionHeader(
+              title: 'أماكني', icon: Icons.star_rounded),
+          const SizedBox(height: 8),
+          if (home != null)
+            _QuickRow(
+                icon: Icons.home_rounded,
+                title: 'المنزل',
+                subtitle: home.title,
+                pos: home.pos),
+          if (work != null) ...[
+            const SizedBox(height: 8),
+            _QuickRow(
+                icon: Icons.work_rounded,
+                title: 'العمل',
+                subtitle: work.title,
+                pos: work.pos),
+          ],
+          const SizedBox(height: 20),
+        ],
+
+        if (app.recentTrips.isNotEmpty) ...[
+          const DSectionHeader(
+              title: 'وجهات أخيرة', icon: Icons.history),
+          const SizedBox(height: 8),
+          for (final t in app.recentTrips.take(5)) ...[
+            _QuickRow(
+                icon: placeIcon(t.category),
+                title: t.title,
+                subtitle: 'ذهبت إليها سابقاً',
+                pos: t.pos),
+            const SizedBox(height: 8),
+          ],
+        ] else
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 40, horizontal: 20),
+            child: Text(
+              'اكتب اسم مكان، أو اختر تصنيفاً من الأعلى',
+              textAlign: TextAlign.center,
+              style: D.bodySoft,
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _QuickRow extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final dynamic pos;
+
+  const _QuickRow({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.pos,
+  });
+
+  @override
+  Widget build(BuildContext context) => DCard(
+        radius: D.rInner,
+        shadow: D.shadowSoft,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+        onTap: () => Navigator.of(context).pop(Destination(title, pos)),
+        child: Row(
+          children: [
+            const Icon(Icons.chevron_left, color: D.textFaint),
+            const Spacer(),
+            Expanded(
+              flex: 6,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(title, style: D.h3),
+                  Text(subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: D.caption),
+                ],
+              ),
+            ),
+            const SizedBox(width: 10),
+            DIconCircle(icon, size: 42, foreground: D.greenDeep),
+          ],
+        ),
+      );
+}
+
+class _NoResults extends StatelessWidget {
+  const _NoResults();
+
+  @override
+  Widget build(BuildContext context) => Center(
+        child: Padding(
+          padding: const EdgeInsets.all(30),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const DIconCircle(Icons.search_off,
+                  size: 56, foreground: D.textSoft),
+              const SizedBox(height: 14),
+              const Text('ما لقينا شي بهذا الاسم', style: D.h3),
+              const SizedBox(height: 8),
+              // نقول السبب المحتمل لا «لا نتائج» وبس: 8% فقط من طرق
+              // العراق مسمّاة في OSM، وهذا أرجح سبب الفشل
+              const Text(
+                'جرّب اسم المنطقة أو معلماً قريباً — أسماء الشوارع ناقصة '
+                'في خريطة العراق المفتوحة.',
+                textAlign: TextAlign.center,
+                style: D.bodySoft,
+              ),
+            ],
+          ),
+        ),
+      );
 }

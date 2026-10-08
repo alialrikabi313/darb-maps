@@ -12,9 +12,10 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../config.dart';
 import '../core/api_client.dart';
+import '../core/favorites.dart';
 import '../core/location_service.dart';
 import '../core/packs.dart';
-import '../core/search.dart';
+import '../core/search.dart' show PoiSearch, Place;
 import '../core/tile_server.dart';
 import '../nav/nav_engine.dart';
 import '../nav/nav_service.dart';
@@ -83,6 +84,75 @@ class AppState extends ChangeNotifier {
 
   List<Report> visibleReports = const [];
 
+  // ── الاستكشاف ────────────────────────────────────────────────────────────
+
+  /// التصنيف المختار من الشرائح العلوية، أو null إذا لا شيء مختار.
+  String? activeCategory;
+
+  /// دبابيس التصنيف المعروضة على الخريطة.
+  List<Place> categoryPins = const [];
+
+  /// المكان الذي لمسه المستخدم — تُعرض بطاقته قبل اختياره وجهةً.
+  Place? previewedPlace;
+
+  bool showReportsLayer = true;
+  bool showTrafficLayer = true;
+
+  /// يبدّل تصنيف الشرائح: اختياره يعرض دبابيسه، وإعادة ضغطه تخفيها.
+  Future<void> toggleCategory(String category) async {
+    if (activeCategory == category) {
+      activeCategory = null;
+      categoryPins = const [];
+      notifyListeners();
+      return;
+    }
+
+    activeCategory = category;
+    previewedPlace = null;
+    notifyListeners();
+
+    // 25 دبّوساً سقف: أكثر منها يغطّي الخريطة نفسها فيصير التصنيف ضرراً
+    categoryPins = await search.nearby(center,
+        categories: [category], radiusM: 6000, limit: 25);
+    notifyListeners();
+  }
+
+  void previewPlace(Place? p) {
+    previewedPlace = p;
+    notifyListeners();
+  }
+
+  void setShowReportsLayer(bool v) {
+    showReportsLayer = v;
+    if (!v) visibleReports = const [];
+    notifyListeners();
+  }
+
+  void setShowTrafficLayer(bool v) {
+    showTrafficLayer = v;
+    notifyListeners();
+  }
+
+  // ── المفضّلة والرحلات ────────────────────────────────────────────────────
+
+  final _favStore = FavoritesStore();
+
+  List<Favorite> get favorites => _favStore.favorites;
+  List<Trip> get recentTrips => _favStore.trips;
+
+  Favorite? favoriteFor(FavoriteKind kind) => _favStore.of(kind);
+
+  Future<void> setFavorite(
+      FavoriteKind kind, String title, LatLng pos) async {
+    await _favStore.setFavorite(kind, title, pos);
+    notifyListeners();
+  }
+
+  Future<void> removeFavorite(Favorite fav) async {
+    await _favStore.removeFavorite(fav);
+    notifyListeners();
+  }
+
   // ── الإعدادات ────────────────────────────────────────────────────────────
 
   bool get muted => voice.muted;
@@ -127,6 +197,7 @@ class AppState extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     voice.muted = prefs.getBool(_kMuted) ?? false;
     nav.traceEnabled = prefs.getBool(_kTrace) ?? Cfg.traceEnabledByDefault;
+    await _favStore.load();
 
     await voice.init();
     if (voice.warning != null) notice = voice.warning;
@@ -215,7 +286,7 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> _pullReports() async {
-    if (!backendUp) return;
+    if (!backendUp || !showReportsLayer) return;
     final center = fix?.pos ?? _fallbackCenter;
 
     final list = await reports.refresh(center,
@@ -238,6 +309,7 @@ class AppState extends ChangeNotifier {
 
   Future<void> chooseDestination(Destination d) async {
     destination = d;
+    previewedPlace = null;
     proposed = null;
     alternates = const [];
     routeError = null;
@@ -320,6 +392,11 @@ class AppState extends ChangeNotifier {
           'صغّرت التطبيق أو قفلت الشاشة';
       notifyListeners();
     }
+
+    // الرحلة تُسجَّل عند الانطلاق لا عند الوصول: السائق قد يغيّر رأيه
+    // في الطريق، والوجهة التي قصدها تبقى مفيدة اختصاراً
+    await _favStore.recordTrip(
+        dest.title, previewedPlace?.category ?? 'place', dest.pos);
 
     await nav.start(route, dest.pos);
   }

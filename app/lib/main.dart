@@ -6,12 +6,13 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'state/app_state.dart';
-import 'ui/map_screen.dart';
+import 'ui/shell.dart';
+import 'ui/theme.dart';
 
 void main() {
   runApp(
     ChangeNotifierProvider(
-      // lazy: false — التهيئة تنسخ ~15MB وتشغّل سيرفر البلاطات، ونبيها
+      // lazy: false — التهيئة تلصق الحزمة وتشغّل سيرفر البلاطات، ونبيها
       // تبدأ مع الإقلاع لا عند أول قراءة للحالة
       create: (_) => AppState()..init(),
       lazy: false,
@@ -26,23 +27,17 @@ class DarbApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'درب',
+      title: 'دربنا',
       debugShowCheckedModeBanner: false,
       locale: const Locale('ar'),
-      theme: ThemeData(
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF2D7FF9),
-        ),
-        scaffoldBackgroundColor: const Color(0xFFF7F8FA),
-      ),
+      theme: D.theme(),
       // RTL مفروض لا مستنتَج: Directionality المستنتَجة تتبع لغة الجهاز،
       // وجهاز بإنجليزية يعرض واجهتنا العربية معكوسة
       builder: (context, child) => Directionality(
         textDirection: TextDirection.rtl,
         child: child ?? const SizedBox.shrink(),
       ),
-      home: const MapScreen(),
+      home: const Shell(),
     );
   }
 }
