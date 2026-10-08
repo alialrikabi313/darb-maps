@@ -152,6 +152,11 @@ class TileServer {
     // وهو خطأ يصعب تشخيصه لأن الخريطة «تشتغل»
     final tmsY = (1 << z) - 1 - y;
 
+    // `tiles` قد تكون جدولاً أو view: Planetiler يبني للمجموعات الكبيرة
+    // tiles_shallow + tiles_data مع tiles كـview، يزيل بها تكرار البلاطات
+    // المتطابقة (وهي كثيرة في صحراء العراق). حزمة بغداد الصغيرة جاءت
+    // جدولاً عادياً. نقرأ من tiles فنشتغل على الاثنين، وقِسنا الخطة على
+    // حزمة العراق: بحث بالمفتاح الأساسي، 0.06ms للبلاطة
     final rows = await db.rawQuery(
       'SELECT tile_data FROM tiles WHERE zoom_level = ? AND tile_column = ? '
       'AND tile_row = ? LIMIT 1',

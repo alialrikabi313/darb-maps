@@ -59,6 +59,10 @@ class AppState extends ChangeNotifier {
   bool ready = false;
   String? fatalError;
 
+  /// تقدّم تهيئة الحزمة. حزمة العراق 203MB تُلصَق من الأصول في أول تشغيل
+  /// فتأخذ عشرات الثواني على تخزين بطيء — بلا رقم تبدو الشاشة معلّقة.
+  PackProgress? packProgress;
+
   /// رسالة غير قاتلة تُعرض شريطاً: صلاحية مرفوضة، باكند واقف، نطق ناقص.
   String? notice;
 
@@ -96,7 +100,11 @@ class AppState extends ChangeNotifier {
 
   Future<void> init() async {
     try {
-      final bundled = await ensureBundledPack();
+      final bundled = await ensureBundledPack(onProgress: (p) {
+        packProgress = p;
+        notifyListeners();
+      });
+
       if (!bundled.isReady) {
         fatalError = 'حزمة الخريطة ما انتسخت — تأكد أن ملفات assets/data '
             'موجودة في التطبيق';
@@ -104,6 +112,7 @@ class AppState extends ChangeNotifier {
         return;
       }
 
+      packProgress = null;
       final packs = await installedPacks();
       await tileServer.start(packs);
       await search.open(packs);

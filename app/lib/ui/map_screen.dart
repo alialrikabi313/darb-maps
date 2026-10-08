@@ -12,6 +12,7 @@ import 'package:maplibre_gl/maplibre_gl.dart';
 import 'package:provider/provider.dart';
 
 import '../config.dart';
+import '../core/packs.dart';
 import '../core/search.dart';
 import '../nav/route_model.dart';
 import '../state/app_state.dart';
@@ -49,7 +50,7 @@ class _MapScreenState extends State<MapScreen> {
     final app = context.watch<AppState>();
 
     if (app.fatalError != null) return _FatalScreen(message: app.fatalError!);
-    if (!app.ready) return const _SplashScreen();
+    if (!app.ready) return _SplashScreen(progress: app.packProgress);
 
     // الرسم بعد اكتمال الإطار: التعديل على الخريطة أثناء build يرمي
     // استثناء setState-during-build
@@ -589,28 +590,54 @@ class _NoticeBar extends StatelessWidget {
 }
 
 class _SplashScreen extends StatelessWidget {
-  const _SplashScreen();
+  final PackProgress? progress;
+  const _SplashScreen({this.progress});
 
   @override
   Widget build(BuildContext context) {
-    return const Scaffold(
-      backgroundColor: Color(0xFFEDF0F2),
+    final p = progress;
+
+    return Scaffold(
+      backgroundColor: const Color(0xFFEDF0F2),
       body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text('درب',
-                style: TextStyle(
-                    fontSize: 44, fontWeight: FontWeight.bold,
-                    color: Color(0xFF2D7FF9))),
-            SizedBox(height: 20),
-            CircularProgressIndicator(),
-            SizedBox(height: 16),
-            // التهيئة تنسخ ~15MB من الأصول في أول تشغيل، فتأخذ ثواني.
-            // بلا رسالة يظن المستخدم أن التطبيق معلّق
-            Text('نهيّئ الخريطة…',
-                style: TextStyle(color: Color(0xFF6B7280))),
-          ],
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 48),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Text('درب',
+                  style: TextStyle(
+                      fontSize: 44, fontWeight: FontWeight.bold,
+                      color: Color(0xFF2D7FF9))),
+              const SizedBox(height: 28),
+
+              // شريط بنسبة لا دوّار: حزمة العراق 203MB تُلصَق في أول
+              // تشغيل وتأخذ عشرات الثواني. دوّار بلا رقم يبدو كتعليق،
+              // والمستخدم يقتل التطبيق في منتصف اللصق
+              if (p != null) ...[
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: LinearProgressIndicator(
+                    value: p.fraction.clamp(0.0, 1.0),
+                    minHeight: 7,
+                    backgroundColor: const Color(0xFFD8DEE4),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Text('${p.label} — ${(p.fraction * 100).round()}%',
+                    style: const TextStyle(color: Color(0xFF6B7280))),
+                const SizedBox(height: 6),
+                const Text('مرة واحدة فقط، وبعدها تفتح فوراً',
+                    style: TextStyle(
+                        fontSize: 12, color: Color(0xFF9AA3AC))),
+              ] else ...[
+                const CircularProgressIndicator(),
+                const SizedBox(height: 16),
+                const Text('نهيّئ الخريطة…',
+                    style: TextStyle(color: Color(0xFF6B7280))),
+              ],
+            ],
+          ),
         ),
       ),
     );

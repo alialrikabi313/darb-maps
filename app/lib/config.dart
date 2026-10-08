@@ -29,10 +29,11 @@ class Cfg {
   // «اختر أي منفذ حرّ» — منفذ ثابت يتضارب مع تطبيق آخر على نفس الجهاز
   static const int tileServerPort = 0;
 
-  // حزمة بغداد تُشحن مع التطبيق. الباقي يُنزَّل من شاشة الأوفلاين
-  static const String bundledPack = 'baghdad';
-  static const String bundledTilesAsset = 'assets/data/baghdad.mbtiles';
-  static const String bundledPoiAsset = 'assets/data/pois.sqlite';
+  // الحزمة المشحونة مع التطبيق. يضبطها tools/07_pack_assets.py ويكتب
+  // معها manifest.json يصف قطعها — الملفات مقطّعة لأن rootBundle.load
+  // تحمّل الأصل كاملاً في الذاكرة، و178MB تعني انهياراً
+  static const String bundledPack = 'iraq';
+  static const String packManifestAsset = 'assets/data/manifest.json';
 
   static const double startLat = 33.3074; // ساحة التحرير
   static const double startLon = 44.4009;

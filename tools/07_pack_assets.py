@@ -2,7 +2,15 @@
 """المرحلة ٠٧: اختيار الحزمة التي تُشحن داخل التطبيق.
 
 يقرأ: darb-data/tiles/*.mbtiles و darb-data/poi/pois.sqlite
-ينتج: app/assets/data/ + تعديل app/lib/config.dart على الحزمة المختارة
+ينتج: app/assets/data/*.part### + manifest.json + تعديل app/lib/config.dart
+
+ليش نقطّع الملفات: التطبيق لازم ينسخ الحزمة من الأصول لملف على القرص
+(sqflite ما يفتح ملفاً داخل الـAPK). و`rootBundle.load` في Flutter تحمّل
+الأصل كاملاً في الذاكرة قبل الكتابة — 178MB تعني انهياراً بنفاد الذاكرة
+على أكثر الهواتف المتوسطة. فنقطّعها قطعاً صغيرة يلصقها التطبيق واحدة
+واحدة، فيبقى أعلى استهلاك ذاكرة حجم قطعة واحدة.
+
+ما صادفنا الانهيار — الحزمة كانت 15MB ومرّت. ظهر الخطر حين كبرت لـ203MB.
 
 المقايضة التي يحسمها هذا السكربت:
 
@@ -19,17 +27,24 @@
 
 import re
 import sys
+import json
 import shutil
+import hashlib
 import argparse
 
 from config import TILES_DIR, POI_DB, REPO_DIR
 
 _ASSETS = REPO_DIR / "app" / "assets" / "data"
 _APP_CONFIG = REPO_DIR / "app" / "lib" / "config.dart"
+_MANIFEST = _ASSETS / "manifest.json"
 
 # حدّ Google Play للحزمة الأساسية. نطبعه حين تتجاوزه الحزمة كي لا
 # يُكتشف عند الرفع
 _PLAY_LIMIT_MB = 150
+
+# حجم القطعة. 16MB: أعلى استهلاك ذاكرة أثناء اللصق، وهو آمن على جهاز
+# بـ2GB. أصغر منه يضاعف عدد الملفات بلا فائدة
+_CHUNK_BYTES = 16 * 1024 * 1024
 
 
 def human(n: float) -> str:
@@ -92,23 +107,27 @@ def pack(name: str) -> None:
               f"كامل.\n    هذا يشتغل، لكنه يكبّر التطبيق بلا فائدة.\n"
               f"    لبغداد وحدها: python 04_extract_pois.py")
 
-    _ASSETS.mkdir(parents=True, exist_ok=True)
-    for old in _ASSETS.glob("*.mbtiles"):
-        print(f"  ◄ نمسح {old.name}")
-        old.unlink()
+    if _ASSETS.exists():
+        shutil.rmtree(_ASSETS)
+    _ASSETS.mkdir(parents=True)
 
-    dest_tiles = _ASSETS / f"{name}.mbtiles"
-    print(f"  ◄ نسخ {tiles.name} ({human(tiles.stat().st_size)})")
-    shutil.copy2(tiles, dest_tiles)
-
-    dest_poi = _ASSETS / "pois.sqlite"
-    print(f"  ◄ نسخ pois.sqlite ({human(POI_DB.stat().st_size)})")
-    shutil.copy2(POI_DB, dest_poi)
+    manifest = {
+        "pack": name,
+        "chunk_bytes": _CHUNK_BYTES,
+        "files": [
+            _split(tiles, f"{name}.mbtiles"),
+            _split(POI_DB, f"{name}.pois.sqlite"),
+        ],
+    }
+    _MANIFEST.write_text(json.dumps(manifest, ensure_ascii=False, indent=2),
+                         encoding="utf-8")
 
     _rewrite_config(name)
 
-    total = dest_tiles.stat().st_size + dest_poi.stat().st_size
-    print(f"\n  ✓ الحزمة «{name}» مشحونة — {human(total)}")
+    total = sum(f["size"] for f in manifest["files"])
+    n_chunks = sum(f["chunks"] for f in manifest["files"])
+    print(f"\n  ✓ الحزمة «{name}» مشحونة — {human(total)} في "
+          f"{n_chunks} قطعة")
 
     total_mb = total / 1024 / 1024
     if total_mb > _PLAY_LIMIT_MB:
@@ -116,6 +135,37 @@ def pack(name: str) -> None:
               f"({_PLAY_LIMIT_MB}MB).\n"
               f"    التوزيع لازم يكون APK مباشراً، أو تُنقل الحزمة لـ"
               f"asset delivery.")
+
+
+def _split(src, target_name: str) -> dict:
+    """يقطّع ملفاً إلى قطع في الأصول، ويرجّع وصفه للمنفست.
+
+    الهاش للملف الكامل لا لكل قطعة: التطبيق يتحقق منه بعد اللصق، وقطعة
+    ناقصة أو مرتّبة غلط تُكتشف هناك. التحقق لكل قطعة يضاعف القراءة بلا
+    أن يمسك خطأً إضافياً.
+    """
+    size = src.stat().st_size
+    digest = hashlib.sha256()
+    chunks = 0
+
+    print(f"  ◄ تقطيع {src.name} ({human(size)})")
+    with open(src, "rb") as f:
+        while True:
+            block = f.read(_CHUNK_BYTES)
+            if not block:
+                break
+            digest.update(block)
+            part = _ASSETS / f"{target_name}.part{chunks:03d}"
+            part.write_bytes(block)
+            chunks += 1
+            print(f"      part{chunks - 1:03d}  {human(len(block))}")
+
+    return {
+        "name": target_name,
+        "size": size,
+        "chunks": chunks,
+        "sha256": digest.hexdigest(),
+    }
 
 
 def _rewrite_config(name: str) -> None:
@@ -126,14 +176,12 @@ def _rewrite_config(name: str) -> None:
     """
     text = _APP_CONFIG.read_text(encoding="utf-8")
 
-    text, n1 = re.subn(r"(bundledPack\s*=\s*')[^']+(')",
-                       rf"\g<1>{name}\g<2>", text)
-    text, n2 = re.subn(r"(bundledTilesAsset\s*=\s*'assets/data/)[^']+(')",
-                       rf"\g<1>{name}.mbtiles\g<2>", text)
+    text, n = re.subn(r"(bundledPack\s*=\s*')[^']+(')",
+                      rf"\g<1>{name}\g<2>", text)
 
-    if n1 != 1 or n2 != 1:
-        sys.exit(f"ما قدرنا نعدّل config.dart (طابقنا {n1} و{n2}) — "
-                 f"عدّل bundledPack و bundledTilesAsset يدوياً")
+    if n != 1:
+        sys.exit(f"ما قدرنا نعدّل config.dart (طابقنا {n} مرة) — "
+                 f"عدّل bundledPack يدوياً")
 
     _APP_CONFIG.write_text(text, encoding="utf-8")
     print(f"  ◄ config.dart: bundledPack = '{name}'")
