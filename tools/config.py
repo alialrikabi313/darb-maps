@@ -1,0 +1,265 @@
+# -*- coding: utf-8 -*-
+"""إعدادات darb كلها في مكان واحد.
+
+عدّل هنا فقط عند تغيير منطقة التغطية، أو مصدر بيانات OSM، أو عتبات الزحام
+والبلاغات، أو أي مسار على القرص. السكربتات تستورد من هنا ولا تحمل قيماً مبثوثة.
+
+القيم المعلّمة بـ«قرارك» هي قرارات مجال ترجع لصاحب المشروع حصراً — كُتبت قيماً
+مبدئية ليشتغل الكود، وتُراجَع كلها من هذا الملف.
+"""
+
+from pathlib import Path
+
+# ── المسارات ────────────────────────────────────────────────────────────────
+
+_HERE = Path(__file__).resolve().parent
+REPO_DIR = _HERE.parent
+
+# البيانات برّا الريبو: ملف العراق وحده ~150MB والبلاطات والرسم أكبر، وما
+# نبيها تدخل git ولا بالغلط
+DATA_DIR = REPO_DIR.parent / "darb-data"
+
+OSM_DIR = DATA_DIR / "osm"
+TILES_DIR = DATA_DIR / "tiles"
+VALHALLA_DIR = DATA_DIR / "valhalla"
+POI_DIR = DATA_DIR / "poi"
+TOOLS_CACHE_DIR = DATA_DIR / "cache"  # الـjar و الأدوات المنزّلة
+
+IRAQ_PBF = OSM_DIR / "iraq-latest.osm.pbf"
+SAMPLE_PBF = OSM_DIR / "baghdad.osm.pbf"
+
+POI_DB = POI_DIR / "pois.sqlite"
+
+# ── مصدر البيانات ───────────────────────────────────────────────────────────
+
+# Geofabrik يحدّث يومياً ويقطّع حسب الدولة. البديل planet.osm كامل (~80GB)
+# مرفوض: ما نحتاج إلا العراق وتقطيعه بأنفسنا يكلّف ساعات تنزيل
+IRAQ_PBF_URL = "https://download.geofabrik.de/asia/iraq-latest.osm.pbf"
+
+# نتحقق من الحجم قبل ما نعتبر التنزيل ناجحاً — التنزيل المقطوع يعطي ملف
+# صالح الشكل وناقص المحتوى، وPlanetiler يفشل بعده بعشر دقائق بلا سبب واضح
+IRAQ_PBF_MIN_BYTES = 60 * 1024 * 1024
+
+# ── العيّنة ─────────────────────────────────────────────────────────────────
+
+# bbox بغداد: الكرخ والرصافة وطريق المطار وجسور دجلة. يخلّي بناء البلاطات
+# والرسم دقائق لا ساعات، ويحتوي كل الحالات الملتوية (جسور متعددة الطبقات،
+# دوارات، طرق سريعة داخل المدينة)
+SAMPLE_BBOX = (44.20, 33.20, 44.65, 33.45)  # (min_lon, min_lat, max_lon, max_lat)
+SAMPLE_NAME = "baghdad"
+
+# مركز الخريطة عند أول تشغيل: ساحة التحرير
+MAP_START_CENTER = (44.4009, 33.3074)  # (lon, lat)
+MAP_START_ZOOM = 13.0
+
+# ── البلاطات ────────────────────────────────────────────────────────────────
+
+# Planetiler: أسرع بانٍ للبلاطات وهو المرجع عند Protomaps. استبعدنا tilemaker
+# لأنه أبطأ بمراتب على نفس المدخل
+# جرّبنا 0.9.4: ما موجود في الإصدارات — غلط تقديري مني لا من المصدر.
+# 0.10.2 تأكّدنا منه عبر GitHub API يوم 2026-10-08
+PLANETILER_VERSION = "0.10.2"
+PLANETILER_JAR_URL = (
+    f"https://github.com/onthegomap/planetiler/releases/download/"
+    f"v{PLANETILER_VERSION}/planetiler.jar"
+)
+PLANETILER_JAR = TOOLS_CACHE_DIR / f"planetiler-{PLANETILER_VERSION}.jar"
+
+# z14 كافٍ: Planetiler يبني overzoom للأعلى، وz15+ يضاعف الحجم بلا تفصيل
+# إضافي في OSM. جرّبنا z15 على بغداد: الحجم +80% والخريطة نفسها
+TILE_MIN_ZOOM = 0
+TILE_MAX_ZOOM = 14
+
+# ذاكرة Planetiler. أقل من 2g يفشل على العراق كامل برمي OutOfMemory متأخراً
+PLANETILER_HEAP = "4g"
+
+# مجلدات Planetiler. بلا تحديدها يكتب في data/sources و data/tmp نسبةً
+# لمجلد التشغيل — أي داخل الريبو، وفيها ~1.3GB بيانات مساعدة
+PLANETILER_SOURCES_DIR = TOOLS_CACHE_DIR / "planetiler-sources"
+PLANETILER_TMP_DIR = TOOLS_CACHE_DIR / "planetiler-tmp"
+
+# المهلة الافتراضية 30s فشلت فعلاً على osmdata.openstreetmap.de من شبكة
+# ~400KB/s — الفشل كان في قياس حجم الملف لا تنزيله، ومع ذلك أسقط البناء كله
+PLANETILER_HTTP_TIMEOUT_S = 180
+PLANETILER_HTTP_RETRIES = 10
+
+# تنزيل قطع متوازية من نفس الملف: ما يزيد النطاق لكنه يخفّف أثر انقطاعة
+# واحدة — القطعة تُعاد وحدها لا الملف كاملاً
+PLANETILER_DOWNLOAD_THREADS = 4
+
+# ── التوجيه ─────────────────────────────────────────────────────────────────
+
+# Valhalla: إعادة التوجيه الحيّة وتغيير وضع السير بلا إعادة بناء الرسم.
+# استبعدنا OSRM لأن كل تغيير في الأوزان يفرض إعادة بناء كامل
+VALHALLA_IMAGE = "ghcr.io/gis-ops/docker-valhalla/valhalla:latest"
+VALHALLA_PORT = 8002
+
+# عدد خيوط الخدمة. الافتراضي nproc = 32 على هذا الجهاز، وجرّبناه فانهارت
+# الخدمة بـ«Too many open files»: prime_server يفتح عملية وsockets لكل
+# خيط لكل خدمة (loki, thor, odin, tyr)، وحدّ ZeroMQ الداخلي 1023 socket
+# ينفد قبل حدّ النظام. 8 كافية لجهاز تطوير، وتُرفع عند النشر بعد قياس.
+# ملاحظة: نفس القيمة تُستخدم لبناء الرسم، فتصغيرها يبطّئ البناء
+VALHALLA_SERVER_THREADS = 8
+VALHALLA_URL = f"http://localhost:{VALHALLA_PORT}"
+
+# ── نقاط الاهتمام ───────────────────────────────────────────────────────────
+
+# أوسمة OSM التي نعدّها نقطة اهتمام، وتصنيفها عندنا. المفتاح تصنيفنا
+# والقيمة قائمة (tag, value) من OSM.
+# ليش قائمة صريحة لا «كل amenity»: OSM فيه amenity=bench و waste_basket،
+# ودخولها يضخّم القاعدة ويخرّب ترتيب البحث بنتائج ما أحد يبحث عنها
+POI_CATEGORIES: dict[str, list[tuple[str, str]]] = {
+    "hospital": [("amenity", "hospital"), ("amenity", "clinic")],
+    "pharmacy": [("amenity", "pharmacy")],
+    "fuel": [("amenity", "fuel")],
+    "restaurant": [("amenity", "restaurant"), ("amenity", "fast_food"),
+                   ("amenity", "cafe")],
+    "mosque": [("amenity", "place_of_worship")],
+    "school": [("amenity", "school"), ("amenity", "kindergarten")],
+    # الجامعة مفصولة عن المدرسة: وجهة يقصدها الناس من كل المدينة، ومدرسة
+    # ابتدائية يقصدها سكّان حيّها. دمجهما خلّى «جامعة بغداد» تنزل تحت
+    # مكتبين حكوميين في نتائج البحث
+    "university": [("amenity", "university"), ("amenity", "college")],
+    "bank": [("amenity", "bank"), ("amenity", "atm")],
+    "market": [("shop", "supermarket"), ("shop", "mall"),
+               ("shop", "convenience")],
+    "government": [("office", "government"), ("amenity", "police"),
+                   ("amenity", "fire_station")],
+    "transport": [("aeroway", "terminal"), ("amenity", "bus_station")],
+    "hotel": [("tourism", "hotel"), ("tourism", "guest_house")],
+    "park": [("leisure", "park"), ("leisure", "garden")],
+}
+
+# نقطة بلا اسم لا تدخل القاعدة: البحث نصّي، وصفٌّ بلا اسم لا يُبحث عنه أبداً
+POI_REQUIRE_NAME = True
+
+# إزالة التكرار: OSM يسمّي نفس المعلم عقدةً ومضلّعاً وعلاقةً. شاهدنا
+# «الكاظمية» ثلاث مرات و«بغداد الجديدة» مرتين في نتائج بغداد.
+# نُبقي الأعلى رتبة ونحذف ما يقع داخل نصف القطر بنفس الاسم والتصنيف.
+# الأماكن نصف قطرها كبير لأن الحي يُوسَم في أطرافه ومركزه؛ والنقاط صغير
+# لأن مطعمين بنفس الاسم على بعد 200m فرعان حقيقيان لا تكراراً
+# الجامعة حرمها كيلومتر (الجادرية) فتُوسَم عقدتين متباعدتين لنفس الاسم؛
+# شاهدنا «جامعة بغداد» مرتين بعد التجميع على 120m
+POI_DEDUP_RADIUS_M = {"place": 3000, "street": 1200, "university": 1200,
+                      "transport": 800, "_default": 120}
+
+# حدود المدن والأحياء: تدخل القاعدة لأن المستخدم يبحث «المنصور» و«الكاظمية»
+PLACE_VALUES = ("city", "town", "suburb", "neighbourhood", "village", "quarter")
+
+# ── البحث العربي ────────────────────────────────────────────────────────────
+
+# تطبيع الحروف قبل الفهرسة والبحث. السبب: OSM العراق يكتب نفس الاسم
+# بأشكال مختلفة — «الكاظميّة» و«الكاظمية»، «مستشفى اليرموك» و«مستشفي اليرموك»
+# قرارك: القائمة مستخلَصة من حالات صادفناها فعلاً — انظر tests/
+ARABIC_NORMALIZE_MAP = {
+    "أ": "ا", "إ": "ا", "آ": "ا", "ٱ": "ا",
+    "ة": "ه",
+    "ى": "ي", "ئ": "ي",
+    "ؤ": "و",
+    "ک": "ك", "ګ": "ك",
+    "ی": "ي",
+}
+
+# التشكيل والتطويل يُحذفان: المستخدم ما يكتبهما في البحث أبداً
+ARABIC_STRIP_CHARS = "ًٌٍَُِّْٓـ"
+
+# بادئات تُلغى من بداية الاسم عند المطابقة: من يكتب «يرموك» يقصد
+# «مستشفى اليرموك»، ومن يكتب «الكاظمية» يقصد «كاظمية»
+SEARCH_STOP_PREFIXES = ("ال", "مستشفى", "مستشفي", "جامع", "مدرسة", "شارع", "ساحة")
+
+# ── البلاغات — قرارك ────────────────────────────────────────────────────────
+
+# أنواع البلاغات وصلاحية كل نوع بالدقائق. الصلاحية هي عمر البلاغ قبل ما
+# يختفي تلقائياً بلا تصويت.
+# قرارك: القيم مبدئية. المنطق وراءها — الحادث يُرفع بسرعة فيعيش قصيراً،
+# والرادار الثابت والسيطرة يعيشان طويلاً لأنهما لا يتحركان، والحفرة شبه دائمة
+REPORT_TYPES: dict[str, dict] = {
+    "crash":        {"ttl_min": 60,    "label": "حادث",          "votes_to_confirm": 2},
+    "jam":          {"ttl_min": 45,    "label": "زحام",          "votes_to_confirm": 3},
+    "police":       {"ttl_min": 90,    "label": "سيطرة",         "votes_to_confirm": 2},
+    "speed_camera": {"ttl_min": 10080, "label": "رادار",         "votes_to_confirm": 3},
+    "hazard":       {"ttl_min": 120,   "label": "خطر على الطريق", "votes_to_confirm": 2},
+    "pothole":      {"ttl_min": 20160, "label": "حفرة",          "votes_to_confirm": 2},
+    "road_closed":  {"ttl_min": 240,   "label": "طريق مغلق",     "votes_to_confirm": 3},
+    "flood":        {"ttl_min": 360,   "label": "ماء على الطريق", "votes_to_confirm": 2},
+    "checkpoint":   {"ttl_min": 10080, "label": "نقطة تفتيش",    "votes_to_confirm": 3},
+    "fuel_queue":   {"ttl_min": 120,   "label": "طابور وقود",    "votes_to_confirm": 2},
+}
+
+# كل تصويت «مو موجود» يسحب من عمر البلاغ هذي النسبة من صلاحيته الأصلية.
+# قرارك: 0.35 يعني ثلاثة أصوات نفي تقتل بلاغاً جديداً تقريباً
+REPORT_DOWNVOTE_DECAY = 0.35
+
+# بلاغ جديد غير مؤكّد يُعرض للمستخدمين بعلامة «غير مؤكّد» لا يُخفى: إخفاؤه
+# حتى التأكيد يعني أن أول مُبلِّغ لا يفيد أحداً، وهي حلقة مفرغة
+REPORT_SHOW_UNCONFIRMED = True
+
+# نصف قطر البحث عن بلاغات حول المسار بالأمتار. 2km تمسك البلاغات على
+# الطريق الموازي أيضاً، وهو مقصود: الزحام ينتقل بين المتوازيين
+REPORT_SEARCH_RADIUS_M = 2000
+
+# مسافة تجميع البلاغات المتشابهة: بلاغان من نفس النوع داخل هذي المسافة
+# يُعدّان بلاغاً واحداً بصوتين. 80m ≈ طول تقاطع كبير في بغداد
+REPORT_CLUSTER_RADIUS_M = 80
+
+# ── الزحام — قرارك ──────────────────────────────────────────────────────────
+
+# عتبات الزحام كنسبة من السرعة الحرّة للطريق. تحت FREE تعني زحاماً.
+# قرارك: النسب مبدئية ومأخوذة من منطق لا من قياس — لازم تُعاير على بيانات
+# بغداد الفعلية بعد ما تتجمّع، وهذا سبب وجودها هنا لا في الكود
+TRAFFIC_LEVELS = {
+    "free":     0.75,  # 75%+ من السرعة الحرّة — أخضر
+    "moderate": 0.50,  # 50–75% — أصفر
+    "heavy":    0.25,  # 25–50% — برتقالي
+    # تحت 0.25 — أحمر (jam)
+}
+
+# السرعة الحرّة الافتراضية لكل صنف طريق كم/س، تُستخدم حين لا maxspeed في OSM.
+# قرارك: أرقام العراق تختلف عن أوروبا — maxspeed ناقص في أكثر طرق بغداد
+DEFAULT_FREE_SPEED_KMH = {
+    "motorway": 100, "trunk": 90, "primary": 60, "secondary": 50,
+    "tertiary": 40, "residential": 30, "service": 20, "unclassified": 30,
+}
+
+# أقل عدد قراءات GPS على قطعة طريق قبل ما نعلن حالتها. أقل من هذا ضجيج:
+# سيارة واحدة واقفة لإنزال راكب ليست زحاماً
+TRAFFIC_MIN_SAMPLES = 5
+
+# عمر قراءة السرعة قبل ما تُهمل بالدقائق. الزحام يتبدّل بسرعة
+TRAFFIC_SAMPLE_TTL_MIN = 15
+
+# ── الخصوصية — قرارك ────────────────────────────────────────────────────────
+
+# قراءات السرعة تُرسل مجهولة: بلا معرّف مستخدم، وبلا مسار كامل — قطعة طريق
+# وسرعة ووقت فقط. السبب: المسار الكامل يعرّف صاحبه حتى بلا اسم (البيت ←
+# العمل بصمة فريدة)
+TRACE_SEND_USER_ID = False
+
+# نحذف نقطتي البداية والنهاية من كل رحلة قبل الإرسال: أولها البيت وآخرها
+# الوجهة، وهما أخطر نقطتين
+TRACE_TRIM_ENDPOINTS_M = 300
+
+# عمر قراءات السرعة في القاعدة قبل الحذف النهائي بالأيام
+TRACE_RETENTION_DAYS = 7
+
+# ── الباكند ─────────────────────────────────────────────────────────────────
+
+PG_HOST = "localhost"
+PG_PORT = 5433  # مو 5432: تجنّب تضارب مع أي PostgreSQL مثبّت على الجهاز
+PG_DB = "darb"
+PG_USER = "darb"
+PG_PASSWORD = "darb_dev_only"  # للتطوير. الإنتاج من متغيّر بيئة
+
+API_PORT = 8080
+API_URL = f"http://localhost:{API_PORT}"
+
+
+def pg_dsn() -> str:
+    return (f"postgresql+psycopg://{PG_USER}:{PG_PASSWORD}"
+            f"@{PG_HOST}:{PG_PORT}/{PG_DB}")
+
+
+def ensure_dirs() -> None:
+    for d in (OSM_DIR, TILES_DIR, VALHALLA_DIR, POI_DIR, TOOLS_CACHE_DIR,
+              PLANETILER_SOURCES_DIR, PLANETILER_TMP_DIR):
+        d.mkdir(parents=True, exist_ok=True)

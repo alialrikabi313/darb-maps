@@ -1,0 +1,30 @@
+# قاعدة darb. الباكند نفسه يشتغل خارج الحاوية في التطوير (uvicorn --reload)
+# ويُحوَّل لحاوية عند النشر — الآن الـreload أهم من تشابه البيئة.
+#
+# المنفذ 5433 لا 5432: على جهاز التطوير PostgreSQL آخر يشتغل على الافتراضي،
+# والتضارب يظهر كخطأ اتصال غامض لا كرسالة «المنفذ مشغول».
+
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    container_name: darb-db
+    environment:
+      POSTGRES_DB: darb
+      POSTGRES_USER: darb
+      POSTGRES_PASSWORD: darb_dev_only
+      # ينشئ القاعدة بترميز UTF-8 وترتيب لا يفترض لغة: أسماء الطرق عربية
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    ports:
+      - "5433:5432"
+    volumes:
+      - darb_pgdata:/var/lib/postgresql/data
+      # يُنفَّذ مرة واحدة عند أول تشغيل على مجلد بيانات فارغ
+      - ./schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U darb -d darb"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  darb_pgdata:

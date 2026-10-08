@@ -1,0 +1,9 @@
+fastapi==0.118.0
+uvicorn[standard]==0.37.0
+# psycopg 3 لا psycopg2: يدعم async ويبني على ويندوز بلا أدوات C
+psycopg[binary]==3.2.10
+sqlalchemy==2.0.43
+pydantic==2.11.9
+# التوكن: hmac يدوي كان يكفي، لكن pyjwt يعطينا exp و iat مجرَّبين
+pyjwt==2.10.1
+httpx==0.28.1

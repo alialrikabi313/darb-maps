@@ -1,0 +1,36 @@
+# البيانات الخام والمبنية كلها برّا الريبو في darb-data/ — هذا احتياط
+# لو نسخ أحد مجلد البيانات جوّا المشروع بالغلط
+darb-data/
+*.osm.pbf
+*.pmtiles
+*.mbtiles
+*.sqlite
+
+# أسرار: مفاتيح الـAPI وبيانات اتصال قاعدة البلاغات
+.env
+server/.env
+
+# حزم التطبيق: تُولَّد بـtools/07_pack_assets.py من darb-data، وحجمها
+# 15MB للعيّنة و211MB للعراق — ما تدخل git
+app/assets/data/
+# ملفات glyph: تُولَّد بـtools/05_fetch_fonts.py، 1.3MB
+app/assets/fonts/
+
+# بايثون
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+
+# سجلات التشغيل المحلية
+tools/.log_*.txt
+
+# Flutter / Dart
+app/build/
+app/.dart_tool/
+app/.flutter-plugins*
+app/android/.gradle/
+app/android/local.properties
+app/ios/Pods/
+*.iml
+.idea/

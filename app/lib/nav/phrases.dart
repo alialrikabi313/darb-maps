@@ -1,0 +1,248 @@
+// صياغة الجمل العربية للملاحة.
+//
+// ═══ قرارك ═══
+// كل نصّ في هذا الملف قرار مجال يرجع لصاحب المشروع. كُتب باللهجة العراقية
+// المحيَّدة — مفهوم في بغداد والبصرة والموصل — وما أجتهد فيه. عدّل هنا
+// وبس؛ لا نصّ عربي معروض للمستخدم في أي ملف آخر إلا تسميات التصنيفات.
+//
+// ليش ما نستخدم narrative ڤالهالا الجاهز: ما فيه عربية مضمونة، وحتى لو
+// كانت فهي فصحى مترجمة حرفياً («استمر على الطريق الحالي») لا الطريقة التي
+// يتكلّم بها السائق العراقي. ونحن نبي صياغتنا على كل حال.
+//
+// قواعد الصياغة التي اتبعتها:
+//   - الجملة الصوتية أقصر من المكتوبة: السائق يسمع وهو يسوق
+//   - المسافة قبل الفعل في التمهيد («بعد 500 متر، انعطف يمين») وبعد الفعل
+//     في التنفيذ («انعطف يمين») — البعيد يحتاج المسافة أولاً كي يعرف أنه
+//     ليس الآن
+//   - لا «يميناً» بالتنوين: تُقرأ «يمينَن» في بعض محرّكات النطق
+
+import 'route_model.dart';
+
+/// فعل المناورة مكتوباً — يُعرض في الشريط الأعلى.
+String maneuverTitle(Maneuver m) {
+  switch (m.type) {
+    case Mnv.start:
+    case Mnv.startRight:
+    case Mnv.startLeft:
+      return 'ابدأ السير';
+
+    case Mnv.destination:
+      return 'وصلت';
+    case Mnv.destinationRight:
+      return 'وصلت — على يمينك';
+    case Mnv.destinationLeft:
+      return 'وصلت — على يسارك';
+
+    case Mnv.becomes:
+    case Mnv.continueOn:
+      return 'كمّل مستقيم';
+
+    case Mnv.slightRight:
+      return 'مِل يمين';
+    case Mnv.right:
+      return 'انعطف يمين';
+    case Mnv.sharpRight:
+      return 'انعطف يمين حاد';
+
+    case Mnv.slightLeft:
+      return 'مِل يسار';
+    case Mnv.left:
+      return 'انعطف يسار';
+    case Mnv.sharpLeft:
+      return 'انعطف يسار حاد';
+
+    case Mnv.uturnRight:
+    case Mnv.uturnLeft:
+      return 'استدر بالعكس';
+
+    case Mnv.rampRight:
+      return 'اطلع على المنحدر يمين';
+    case Mnv.rampLeft:
+      return 'اطلع على المنحدر يسار';
+    case Mnv.rampStraight:
+      return 'كمّل على المنحدر';
+
+    case Mnv.exitRight:
+      return 'اخرج يمين';
+    case Mnv.exitLeft:
+      return 'اخرج يسار';
+
+    case Mnv.stayRight:
+      return 'ابقَ يمين';
+    case Mnv.stayLeft:
+      return 'ابقَ يسار';
+    case Mnv.stayStraight:
+      return 'ابقَ مستقيم';
+
+    case Mnv.merge:
+      return 'اندمج';
+    case Mnv.mergeRight:
+      return 'اندمج يمين';
+    case Mnv.mergeLeft:
+      return 'اندمج يسار';
+
+    case Mnv.roundaboutEnter:
+      final n = m.roundaboutExitCount;
+      if (n == null) return 'ادخل الدوّار';
+      return 'ادخل الدوّار واخرج من ${_ordinal(n)} مخرج';
+    case Mnv.roundaboutExit:
+      return 'اخرج من الدوّار';
+
+    case Mnv.ferryEnter:
+      return 'اركب المعدية';
+    case Mnv.ferryExit:
+      return 'انزل من المعدية';
+
+    default:
+      return 'كمّل';
+  }
+}
+
+/// الجملة الكاملة المكتوبة: الفعل + الشارع أو اللوحة.
+String maneuverDetail(Maneuver m) {
+  final title = maneuverTitle(m);
+  final street = m.announceStreet;
+
+  if (m.isArrival) return title;
+
+  // رقم المخرج أهم من اسم الشارع على الطرق السريعة: اللوحة تحمل الرقم
+  // والسائق يبحث عنه بعينه
+  if (m.exitNumber != null) {
+    final toward = m.exitToward.isEmpty ? '' : ' باتجاه ${m.exitToward.first}';
+    return '$title — مخرج ${m.exitNumber}$toward';
+  }
+
+  if (street == null) return title;
+
+  // «كمّل مستقيم على شارع فلان» لا «كمّل مستقيم إلى شارع فلان»: أنت فيه
+  // أصلاً ولا تدخله
+  final prep = (m.type == Mnv.continueOn || m.type == Mnv.becomes ||
+          m.type == Mnv.stayStraight)
+      ? 'على'
+      : 'إلى';
+  return '$title $prep $street';
+}
+
+/// الجملة الصوتية. المرحلة تحدّد الإسهاب:
+///   0 = تمهيد بعيد، 1 = تأكيد، 2 = تنفيذ الآن
+String maneuverVoice(Maneuver m, double distanceM, int stage) {
+  if (m.isArrival) {
+    if (stage == 2) return 'وصلت وجهتك';
+    return 'وجهتك بعد ${distanceText(distanceM)}';
+  }
+
+  final title = maneuverTitle(m);
+  final street = m.announceStreet;
+
+  switch (stage) {
+    case 0:
+      // التمهيد: المسافة أولاً كي يعرف السائق أن المناورة ليست الآن
+      final where = street == null ? '' : ' إلى $street';
+      return 'بعد ${distanceText(distanceM)}، $title$where';
+
+    case 1:
+      if (m.exitNumber != null) {
+        return 'بعد ${distanceText(distanceM)}، $title من مخرج ${m.exitNumber}';
+      }
+      return 'بعد ${distanceText(distanceM)}، $title';
+
+    default:
+      // التنفيذ: أقصر ما يمكن. السائق عند التقاطع ولا وقت لجملة طويلة
+      if (m.type == Mnv.roundaboutEnter && m.roundaboutExitCount != null) {
+        return '${_ordinal(m.roundaboutExitCount!)} مخرج';
+      }
+      return title;
+  }
+}
+
+/// جملة تنبيه بلاغ أمام السائق.
+String reportAlertVoice(String kind, String label, double distanceM) {
+  switch (kind) {
+    case 'speed_camera':
+      return 'انتبه، رادار بعد ${distanceText(distanceM)}';
+    case 'police':
+    case 'checkpoint':
+      return '$label بعد ${distanceText(distanceM)}';
+    case 'crash':
+      return 'حادث على طريقك بعد ${distanceText(distanceM)}';
+    case 'jam':
+      return 'زحام قدّامك بعد ${distanceText(distanceM)}';
+    case 'road_closed':
+      return 'الطريق مغلق بعد ${distanceText(distanceM)}';
+    case 'pothole':
+      return 'حفرة قدّامك';
+    case 'flood':
+      return 'ماء على الطريق بعد ${distanceText(distanceM)}';
+    case 'fuel_queue':
+      return 'طابور وقود بعد ${distanceText(distanceM)}';
+    default:
+      return '$label بعد ${distanceText(distanceM)}';
+  }
+}
+
+/// المسافة منطوقة. نقرّبها بقصد: «بعد 487 متر» دقة زائفة ومربكة، و«بعد
+/// 500 متر» هي ما يقوله إنسان.
+String distanceText(double meters) {
+  if (meters < 30) return 'الآن';
+  if (meters < 1000) {
+    final rounded = meters < 150
+        ? (meters / 10).round() * 10
+        : (meters / 50).round() * 50;
+    return '$rounded متر';
+  }
+  final km = meters / 1000.0;
+  if (km < 10) {
+    final s = km.toStringAsFixed(1).replaceAll('.0', '');
+    return '$s كيلومتر';
+  }
+  return '${km.round()} كيلومتر';
+}
+
+/// المسافة مكتوبة — أقصر من المنطوقة لأن المساحة على الشاشة ضيقة.
+String distanceLabel(double meters) {
+  if (meters < 1000) return '${(meters / 10).round() * 10} م';
+  final km = meters / 1000.0;
+  return km < 10 ? '${km.toStringAsFixed(1)} كم' : '${km.round()} كم';
+}
+
+/// الزمن المتبقّي مكتوباً.
+String durationLabel(double seconds) {
+  // الفحص على الثواني لا على الدقائق المقرَّبة: 30 ثانية تُقرَّب لدقيقة
+  // (التقريب يرفع النصف) فكانت تُعرض «1 دقيقة» وأنت على بعد نصفها
+  if (seconds < 45) return 'أقل من دقيقة';
+
+  final mins = (seconds / 60).round();
+  if (mins < 60) return '$mins دقيقة';
+
+  final h = mins ~/ 60;
+  final m = mins % 60;
+  if (m == 0) return h == 1 ? 'ساعة' : '$h ساعات';
+  return h == 1 ? 'ساعة و$m دقيقة' : '$h ساعات و$m دقيقة';
+}
+
+/// وقت الوصول المتوقّع بصيغة 12 ساعة عربية.
+String arrivalLabel(DateTime at) {
+  final h24 = at.hour;
+  final period = h24 < 12 ? 'ص' : 'م';
+  var h = h24 % 12;
+  if (h == 0) h = 12;
+  final mm = at.minute.toString().padLeft(2, '0');
+  return '$h:$mm $period';
+}
+
+/// الترتيب العربي حتى العاشر — مخارج الدوّارات ما تزيد عليه عملياً.
+String _ordinal(int n) {
+  const words = [
+    '', 'أول', 'ثاني', 'ثالث', 'رابع', 'خامس',
+    'سادس', 'سابع', 'ثامن', 'تاسع', 'عاشر',
+  ];
+  return n >= 1 && n < words.length ? words[n] : '$n';
+}
+
+/// جمل حالة الملاحة.
+const String msgRerouting = 'نعيد حساب الطريق';
+const String msgOffRoute = 'طلعت عن الطريق';
+const String msgNoRoute = 'ما لقينا طريقاً لهذي الوجهة';
+const String msgOffline = 'لا إنترنت — الملاحة تشتغل، بس بلا زحام ولا بلاغات';
+const String msgGpsWeak = 'إشارة GPS ضعيفة';
+const String msgArrived = 'وصلت';

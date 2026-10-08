@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  السيرفر المحلي داخل التطبيق يقدّم البلاطات وملفات glyph لـMapLibre على
+  http://127.0.0.1:<منفذ عشوائي>. أندرويد 9+ يمنع HTTP بلا تشفير، وبلا
+  هذا الإعداد تظهر الخريطة رمادية بلا أي رسالة خطأ.
+
+  السماح بالمحلي فقط — لا cleartextTrafficPermitted عاماً: طلبات
+  التطبيق للباكند لازم تبقى مجبَرة على HTTPS في الإنتاج.
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
+        <!-- 10.0.2.2 هو المضيف من داخل محاكي أندرويد — نحتاجه لتجربة
+             الباكند في التطوير. يُحذف عند النشر -->
+        <domain includeSubdomains="false">10.0.2.2</domain>
+    </domain-config>
+</network-security-config>
