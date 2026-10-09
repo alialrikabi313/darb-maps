@@ -28,9 +28,10 @@ class Place {
   final int rank;
   final Map<String, dynamic> tags;
 
-  /// مصدر النقطة: `osm` أو `overture:meta,...`. نعرضه في بطاقة المكان
-  /// لأن CDLA-Permissive-2.0 تشترط الإسناد، ولأن المستخدم يستحق يعرف
-  /// من أين جاءت المعلومة حين تكون خاطئة.
+  /// مصدر النقطة: `osm` أو `overture:…` أو `osm-address` أو
+  /// `osm-inferred`. نعرضه في بطاقة المكان لأن CDLA-Permissive-2.0
+  /// تشترط الإسناد، ولأن المستخدم يستحق يعرف من أين جاءت المعلومة حين
+  /// تكون خاطئة — وهو أهمّ في المستنتَج.
   final String source;
 
   /// المسافة من المستخدم بالأمتار — تُحسب وقت البحث لا تُخزَّن.
@@ -50,8 +51,20 @@ class Place {
   });
 
   /// اسم المصدر مقروءاً للعرض.
-  String get sourceLabel =>
-      source.startsWith('overture') ? 'Overture Maps' : 'OpenStreetMap';
+  String get sourceLabel => switch (source) {
+        final s when s.startsWith('overture') => 'Overture Maps',
+        'osm-address' => 'من عناوين المباني',
+        'osm-inferred' => 'اسم مستنتَج — قد يكون غير دقيق',
+        _ => 'OpenStreetMap',
+      };
+
+  /// الاسم مستنتَج لا مكتوب صراحةً في الخريطة.
+  ///
+  /// الواجهة تعلّمه، والأهمّ أنه **لا يُنطق أبداً**: التوجيه الصوتي يأخذ
+  /// أسماء الشوارع من ڤالهالا مباشرة ولا يمسّ قاعدة البحث. اسم مستنتَج
+  /// خاطئ يظهر في نتيجة بحث يصحّحه المستخدم بنظرة، ولو نُطق في مناورة
+  /// لأضلّه.
+  bool get isInferred => source == 'osm-inferred';
 
   String get title => nameAr ?? nameEn ?? 'بلا اسم';
   String? get subtitle => nameAr != null && nameEn != null ? nameEn : null;

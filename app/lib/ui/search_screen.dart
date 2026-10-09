@@ -236,6 +236,19 @@ class _ResultRow extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: D.caption),
+                // الاسم المستنتَج معلَّم: المستخدم يصحّحه بنظرة، وإخفاء
+                // أنه تخمين يجعله يثق به أكثر مما يستحق
+                if (place.isInferred)
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      Text(place.sourceLabel,
+                          style: D.caption.copyWith(color: D.warn)),
+                      const SizedBox(width: 3),
+                      const Icon(Icons.help_outline,
+                          size: 11, color: D.warn),
+                    ],
+                  ),
               ],
             ),
           ),
