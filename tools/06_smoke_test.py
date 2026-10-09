@@ -28,6 +28,7 @@ import requests
 from config import (
     API_URL, VALHALLA_URL, TILES_DIR, POI_DB, SAMPLE_NAME, MAP_START_CENTER,
     TILE_MAX_ZOOM, REPORT_TYPES, TRACE_TRIM_ENDPOINTS_M, REPO_DIR,
+    ROAD_CANDIDATE_PROMOTE_HITS,
 )
 
 # نقاط بغدادية حقيقية نستخدمها في كل الفحوص
@@ -584,6 +585,65 @@ def check_traffic() -> None:
        f"{int(traffic['coverage'] * 100)}%")
     ok("تصحيح الـETA بالزحام",
        f"{round(base / 60)} دقيقة → {round(withjam / 60)} دقيقة")
+
+    check_road_candidates(pts, now)
+
+
+def check_road_candidates(route_pts: list, now: float) -> None:
+    """كشف الطرق الناقصة من الآثار.
+
+    فحصان متقابلان، والثاني أهمّ: أثر في الصحراء لازم يُكتشف، وأثر على
+    طريق معروف لازم **لا** يُكتشف. بلا الثاني يصير الكشف مولّد ضجيج —
+    يرشّح كل طريق في البلد ويضيع الحقيقي بينها.
+    """
+    # نقيس أعلى عدّاد لا عدد المرشّحين: المرور الثاني على نفس المكان
+    # يرفع عدّاد المرشّح الموجود ولا ينشئ جديداً — وهو السلوك الصحيح،
+    # فعدّ المرشّحين لا يتغيّر ويبدو كأن الكشف معطّل
+    def _max_hits() -> int:
+        d = requests.get(f"{API_URL}/roads/candidates", timeout=20).json()
+        return max((c["hits"] for c in d["candidates"]), default=0)
+
+    before_hits = _max_hits()
+
+    # ١. أثر على طريق معروف — ما يصير مرشّحاً
+    known = [{"lat": la, "lon": lo, "time": now + i * 3, "speed_kmh": 40.0}
+             for i, (la, lo) in enumerate(route_pts[:100])]
+    res = requests.post(f"{API_URL}/traffic/trace", json={"points": known},
+                        timeout=40).json()
+
+    if res.get("road_candidates", 0) != 0:
+        die("إنذار كاذب في كشف الطرق",
+            f"أثر على مسار ڤالهالا نفسه ولّد "
+            f"{res['road_candidates']} مرشّحاً — المطابقة أو العتبات غلط")
+    ok("كشف الطرق: بلا إنذار كاذب",
+       f"{res['matched_edges']} حافة مطابَقة، صفر مرشّحين")
+
+    # ٢. أثر في الصحراء غرب بغداد — لازم يُكتشف ويرتفع عدّاده
+    desert = [{"lat": 33.15 + i * 0.0012, "lon": 43.80 + i * 0.0004,
+               "time": now + i * 6, "speed_kmh": 55.0} for i in range(40)]
+
+    need = ROAD_CANDIDATE_PROMOTE_HITS
+    for _ in range(need + 1):
+        requests.post(f"{API_URL}/traffic/trace", json={"points": desert},
+                      timeout=40)
+
+    data = requests.get(f"{API_URL}/roads/candidates", timeout=20).json()
+
+    if _max_hits() <= before_hits:
+        die("كشف الطرق الناقصة",
+            "أثر 4كم في الصحراء ما ولّد مرشّحاً ولا رفع عدّاد موجود — "
+            "الكشف معطّل")
+
+    if data["stats"]["promoted"] < 1:
+        die("ترقية المرشّح",
+            f"مرّ {need + 1} مرة وما وصل العتبة "
+            f"({ROAD_CANDIDATE_PROMOTE_HITS})")
+
+    top = data["candidates"][0]
+    ok("كشف الطرق الناقصة",
+       f"{data['stats']['promoted']} مرشّحاً مرقّى، "
+       f"{data['stats']['promoted_km']} كم — أطولها {top['length_m']}م "
+       f"مرّ به {top['hits']} جهازاً")
 
 
 def _decode_all(enc: str) -> list[tuple[float, float]]:

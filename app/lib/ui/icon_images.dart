@@ -39,6 +39,7 @@ const Map<String, IconData> _poiIcons = {
   'bank': Icons.account_balance,
   'hotel': Icons.hotel,
   'park': Icons.park,
+  'car_service': Icons.car_repair,
   'government': Icons.account_balance_outlined,
   'transport': Icons.directions_bus,
   'place': Icons.location_city,

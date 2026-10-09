@@ -21,6 +21,7 @@ const _shortcuts = <(String, String, IconData)>[
   ('mosque', 'معالم', Icons.mosque),
   ('market', 'أسواق', Icons.shopping_bag),
   ('hospital', 'مستشفيات', Icons.local_hospital),
+  ('car_service', 'خدمة سيارات', Icons.car_repair),
 ];
 
 class SavedScreen extends StatelessWidget {

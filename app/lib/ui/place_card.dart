@@ -24,6 +24,7 @@ IconData placeIcon(String category) => switch (category) {
       'bank' => Icons.account_balance,
       'hotel' => Icons.hotel,
       'park' => Icons.park,
+      'car_service' => Icons.car_repair,
       'government' => Icons.account_balance_outlined,
       'transport' => Icons.directions_bus,
       'place' => Icons.location_city,
@@ -83,6 +84,9 @@ class PlaceCard extends StatelessWidget {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: D.bodySoft),
+                    Text(place.sourceLabel,
+                        textAlign: TextAlign.right,
+                        style: D.caption.copyWith(color: D.textFaint)),
                     if (place.subtitle != null)
                       Text(place.subtitle!,
                           textAlign: TextAlign.right,

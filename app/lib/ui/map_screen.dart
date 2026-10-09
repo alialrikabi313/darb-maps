@@ -344,6 +344,7 @@ const _categories = <(String, String, IconData)>[
   ('hospital', 'مستشفيات', Icons.local_hospital),
   ('mosque', 'جوامع', Icons.mosque),
   ('market', 'أسواق', Icons.shopping_bag),
+  ('car_service', 'خدمة سيارات', Icons.car_repair),
 ];
 
 class MapOverlay extends StatelessWidget {

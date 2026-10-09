@@ -76,10 +76,13 @@ class ProfileScreen extends StatelessWidget {
         const DSectionHeader(
             title: 'عن التطبيق', icon: Icons.info_outline),
         const SizedBox(height: 8),
+        // الإسناد شرط ترخيص لا تجميل: ODbL تشترطه لبيانات OSM،
+        // وCDLA-Permissive-2.0 تشترطه لنقاط Overture
         const _InfoRow(
           icon: Icons.public,
           title: 'بيانات الخريطة',
-          subtitle: '© OpenStreetMap contributors — ترخيص ODbL.\n'
+          subtitle: '© OpenStreetMap contributors — ODbL\n'
+              '© Overture Maps Foundation — CDLA-Permissive-2.0\n'
               'التوجيه بـValhalla، والبلاطات ببناء Planetiler.',
         ),
         const SizedBox(height: 8),

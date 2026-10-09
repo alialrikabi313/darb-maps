@@ -28,6 +28,11 @@ class Place {
   final int rank;
   final Map<String, dynamic> tags;
 
+  /// مصدر النقطة: `osm` أو `overture:meta,...`. نعرضه في بطاقة المكان
+  /// لأن CDLA-Permissive-2.0 تشترط الإسناد، ولأن المستخدم يستحق يعرف
+  /// من أين جاءت المعلومة حين تكون خاطئة.
+  final String source;
+
   /// المسافة من المستخدم بالأمتار — تُحسب وقت البحث لا تُخزَّن.
   final double? distanceM;
 
@@ -40,15 +45,21 @@ class Place {
     required this.pos,
     required this.rank,
     required this.tags,
+    this.source = 'osm',
     this.distanceM,
   });
+
+  /// اسم المصدر مقروءاً للعرض.
+  String get sourceLabel =>
+      source.startsWith('overture') ? 'Overture Maps' : 'OpenStreetMap';
 
   String get title => nameAr ?? nameEn ?? 'بلا اسم';
   String? get subtitle => nameAr != null && nameEn != null ? nameEn : null;
 
   Place withDistance(double d) => Place(
         id: id, nameAr: nameAr, nameEn: nameEn, category: category,
-        subtype: subtype, pos: pos, rank: rank, tags: tags, distanceM: d,
+        subtype: subtype, pos: pos, rank: rank, tags: tags,
+        source: source, distanceM: d,
       );
 }
 
@@ -69,6 +80,7 @@ const Map<String, String> categoryLabels = {
   'transport': 'نقل',
   'hotel': 'فندق',
   'park': 'حديقة',
+  'car_service': 'خدمة سيارات',
 };
 
 class PoiSearch {
@@ -177,7 +189,7 @@ class PoiSearch {
       Database db, String match, String norm, int limit) async {
     final rows = await db.rawQuery('''
       SELECT p.id, p.name_ar, p.name_en, p.category, p.subtype, p.lat, p.lon,
-             p.rank, p.tags
+             p.rank, p.tags, p.source
       FROM poi_fts f JOIN poi p ON p.id = f.rowid
       WHERE poi_fts MATCH ?
       ORDER BY
@@ -211,7 +223,7 @@ class PoiSearch {
     for (final db in _dbs) {
       final rows = await db.rawQuery('''
         SELECT p.id, p.name_ar, p.name_en, p.category, p.subtype, p.lat, p.lon,
-               p.rank, p.tags
+               p.rank, p.tags, p.source
         FROM poi_geo g JOIN poi p ON p.id = g.id
         WHERE g.min_lon >= ? AND g.max_lon <= ?
           AND g.min_lat >= ? AND g.max_lat <= ?
@@ -246,6 +258,8 @@ class PoiSearch {
         tags: r['tags'] == null
             ? const {}
             : jsonDecode(r['tags'] as String) as Map<String, dynamic>,
+        // الحزم القديمة بلا عمود source — نعدّها OSM بدل ما ننهار عليها
+        source: (r['source'] as String?) ?? 'osm',
       );
 
   Future<void> close() async {

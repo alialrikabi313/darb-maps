@@ -105,6 +105,32 @@ CREATE TABLE road_closure (
 
 CREATE INDEX road_closure_geo ON road_closure USING GIST (geom);
 
+-- ── طرق مرشّحة ─────────────────────────────────────────────────────────────
+-- أثر GPS مرّ من مكان لا يعرف Valhalla فيه طريقاً = طريق ناقص من الخريطة.
+-- هذا بالضبط ما يجعل ويز أغنى منّا: ملايين السيارات ترسم الطرق الجديدة.
+-- قِسنا الفجوة: 8% فقط من طرق العراق مسمّاة في OSM.
+--
+-- نخزّن القطعة غير المطابَقة لا الأثر كاملاً، وبلا أي ربط بجهاز — نفس
+-- سياسة الخصوصية في traffic_sample.
+CREATE TABLE road_candidate (
+    id          bigserial PRIMARY KEY,
+    -- خطّ القطعة التي ما طابقت. geography لا geometry: نقيس أطوالاً
+    -- ومسافات بالأمتار لا بالدرجات
+    geom        geography(LineString, 4326) NOT NULL,
+    length_m    real NOT NULL,
+    -- كم جهازاً مرّ من هنا. طريق حقيقي يمرّ به كثيرون؛ مرّة واحدة قد
+    -- تكون سيارة في ساحة ترابية أو خطأ GPS
+    hits        integer NOT NULL DEFAULT 1,
+    first_seen  timestamptz NOT NULL DEFAULT now(),
+    last_seen   timestamptz NOT NULL DEFAULT now(),
+    -- صار مؤكّداً ويستحق العرض للتحرير في OSM
+    is_promoted boolean NOT NULL DEFAULT false
+);
+
+CREATE INDEX road_candidate_geo ON road_candidate USING GIST (geom);
+CREATE INDEX road_candidate_hits ON road_candidate (hits DESC)
+    WHERE NOT is_promoted;
+
 -- ── دالة التنظيف ───────────────────────────────────────────────────────────
 -- تُنادى من وظيفة دورية. ما جعلناها trigger لأن الحذف وقت الكتابة يبطّئ
 -- أكثر طلب حرارةً في النظام (إرسال بلاغ)

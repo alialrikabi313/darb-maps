@@ -20,7 +20,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import bindparam, text
 from sqlalchemy.engine import Connection
 
-from .. import valhalla
+from .. import roads, valhalla
 from ..db import get_conn
 from ..schemas import TraceIn, TrafficSegment
 from ..settings import (
@@ -142,7 +142,12 @@ async def submit_trace(body: TraceIn,
             VALUES (:way_id, :speed, :at)
         """), rows)
 
-    return {"stored": len(rows), "matched_edges": len(edges)}
+    # الجزء من الأثر الذي ما غطّته أي حافة = طريق ناقص من الخريطة.
+    # نفس الطلب الذي حسبنا به الزحام يعطينا هذا مجّاناً
+    candidates = roads.record_candidates(conn, points, edges)
+
+    return {"stored": len(rows), "matched_edges": len(edges),
+            "road_candidates": candidates}
 
 
 @router.post("/aggregate")

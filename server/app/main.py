@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
-from . import valhalla
+from . import roads, valhalla
 from .auth import register_device
 from .db import get_conn, ping
 from .routers import reports, routing, traffic
@@ -66,6 +66,18 @@ def new_device(conn: Connection = Depends(get_conn)) -> DeviceOut:
     """
     did, token = register_device(conn)
     return DeviceOut(device_id=str(did), token=token)
+
+
+@app.get("/roads/candidates")
+def road_candidates(limit: int = 100,
+                    conn: Connection = Depends(get_conn)) -> dict:
+    """الطرق التي يمرّ بها الناس وما تعرفها الخريطة.
+
+    مخرجها مُعدّ للتحرير في OSM: من يفتحها يرى أين يرسم. هذا ما يسدّ
+    فجوة الطرق الناقصة التي تجعل خرائط ويز أغنى.
+    """
+    return {"stats": roads.stats(conn),
+            "candidates": roads.promoted(conn, limit)}
 
 
 @app.post("/maintenance/cleanup")
