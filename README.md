@@ -82,11 +82,17 @@ cd server
 docker compose up -d                        # PostGIS على 5433
 python -m venv .venv
 .venv/Scripts/pip install -r requirements.txt
-.venv/Scripts/python -m uvicorn app.main:app --port 8080 --reload
+.venv/Scripts/pip install osmium duckdb requests  # لسكربتات tools/
+DARB_DEV=1 .venv/Scripts/python -m uvicorn app.main:app --port 8080 --reload
 ```
 
 venv لا تثبيت عالمي بقصد: التثبيت العالمي كسر اعتمادات مشاريع أخرى على
-جهاز التطوير فعلاً (aiogram يحتاج pydantic<2.10).
+جهاز التطوير فعلاً (aiogram يحتاج pydantic<2.10). وسكربتات `tools/`
+تشتغل من نفس الـvenv.
+
+`DARB_DEV=1` ضروري: السيرفر يموت بلا `DARB_JWT_SECRET` و`DARB_ADMIN_TOKEN`،
+والفشل مغلق بقصد — نسيان المتغيّر في الإنتاج كان يسقط على سرّ مكتوب في
+الريبو. للإنتاج اضبطهما بسرّين عشوائيين طويلين.
 
 التوثيق التفاعلي على <http://localhost:8080/docs>.
 
