@@ -174,6 +174,8 @@ void main() {
     });
   });
 
+  landmarkTests();
+
   group('arrivalLabel — 12 ساعة عربية', () {
     test('الصباح', () {
       expect(arrivalLabel(DateTime(2026, 10, 8, 9, 5)), '9:05 ص');
@@ -186,6 +188,117 @@ void main() {
     });
     test('الظهر يصير 12 م لا 0 م', () {
       expect(arrivalLabel(DateTime(2026, 10, 8, 12, 0)), '12:00 م');
+    });
+  });
+}
+
+// ── التعليمة بالمعلم ───────────────────────────────────────────────────────
+//
+// 9% فقط من طرق العراق مسمّاة. قِسنا على خمسة مسارات في خمس مدن:
+// التعليمات التي فيها اسم شارع 46%، وبإضافة المعالم 83%. فهذا المنطق
+// يحمل نصف ما يُنطق للسائق.
+
+void landmarkTests() {
+  group('maneuverDetail بالمعلم', () {
+    test('اسم الشارع يتقدّم على المعلم حين يوجد', () {
+      final m = mk(10, beginStreets: ['شارع الخلد']);
+      final out = maneuverDetail(m,
+          landmark: const Landmark('محطة وقود النصر'));
+      expect(out, 'انعطف يمين إلى شارع الخلد');
+      expect(out, isNot(contains('محطة')));
+    });
+
+    test('بلا اسم شارع يحمل المعلم التعليمة', () {
+      expect(
+        maneuverDetail(mk(10), landmark: const Landmark('جامع الكاظمية')),
+        'انعطف يمين عند جامع الكاظمية',
+      );
+    });
+
+    test('المعلم قبل المناورة يأخذ «بعد»', () {
+      // الفرق يهمّ السائق: «بعد المحطة انعطف» غير «انعطف عند المحطة»
+      expect(
+        maneuverDetail(mk(15),
+            landmark: const Landmark('محطة الوقود', where: LandmarkWhere.before)),
+        'انعطف يسار بعد محطة الوقود',
+      );
+    });
+
+    test('بلا شارع ولا معلم يرجّع الفعل وحده لا نصّاً مكسوراً', () {
+      expect(maneuverDetail(mk(10)), 'انعطف يمين');
+    });
+
+    test('رقم المخرج يتقدّم على المعلم', () {
+      final m = mk(20, exitNumber: '14');
+      expect(maneuverDetail(m, landmark: const Landmark('مول بغداد')),
+          contains('مخرج 14'));
+    });
+
+    test('الوصول بمعلم يطمئن السائق أنه في المكان الصحيح', () {
+      expect(
+        maneuverDetail(mk(Mnv.destination),
+            landmark: const Landmark('مستشفى اليرموك')),
+        'وصلت — وجهتك عند مستشفى اليرموك',
+      );
+    });
+  });
+
+  group('maneuverVoice بالمعلم', () {
+    test('التمهيد يذكر المسافة ثم المعلم', () {
+      expect(
+        maneuverVoice(mk(10), 500, 0,
+            landmark: const Landmark('محطة وقود النصر')),
+        'بعد 500 متر، انعطف يمين عند محطة وقود النصر',
+      );
+    });
+
+    test('التنفيذ يُبقي المعلم حين لا اسم شارع', () {
+      // «انعطف يمين» وحدها عند تقاطع مزدوج تترك السائق يحزر
+      expect(
+        maneuverVoice(mk(10), 50, 2, landmark: const Landmark('الجامع')),
+        'انعطف يمين عند الجامع',
+      );
+    });
+
+    test('التنفيذ يسقط المعلم حين يوجد اسم شارع', () {
+      // الجملة عند التقاطع لازم تكون أقصر ما يمكن
+      expect(
+        maneuverVoice(mk(10, beginStreets: ['شارع الخلد']), 50, 2,
+            landmark: const Landmark('الجامع')),
+        'انعطف يمين',
+      );
+    });
+
+    test('ما نجمع اسم الشارع والمعلم في جملة واحدة', () {
+      // جملة فيها الاثنان أطول من أن تُسمع قبل التقاطع
+      final out = maneuverVoice(mk(10, beginStreets: ['شارع الخلد']), 500, 0,
+          landmark: const Landmark('جامع الكاظمية'));
+      expect(out, contains('شارع الخلد'));
+      expect(out, isNot(contains('جامع')));
+    });
+
+    test('الوصول بمعلم', () {
+      expect(
+        maneuverVoice(mk(Mnv.destination), 10, 2,
+            landmark: const Landmark('مقهى الزهاوي')),
+        'وصلت وجهتك عند مقهى الزهاوي',
+      );
+    });
+
+    test('الدوّار يبقى بترتيب المخرج لا بالمعلم', () {
+      expect(
+        maneuverVoice(mk(Mnv.roundaboutEnter, roundaboutExit: 3), 20, 2,
+            landmark: const Landmark('النصب')),
+        'ثالث مخرج',
+      );
+    });
+  });
+
+  group('Landmark', () {
+    test('حرف الجرّ يتبع الموضع', () {
+      expect(const Landmark('س').preposition, 'عند');
+      expect(const Landmark('س', where: LandmarkWhere.before).preposition, 'بعد');
+      expect(const Landmark('س', where: LandmarkWhere.after).preposition, 'قبل');
     });
   });
 }

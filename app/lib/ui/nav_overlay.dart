@@ -147,7 +147,7 @@ class _ManeuverCard extends StatelessWidget {
               SizedBox(
                 width: MediaQuery.of(context).size.width * 0.46,
                 child: Text(
-                  _subtitle(m),
+                  _subtitle(m, nav.nextLandmark),
                   textAlign: TextAlign.right,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
@@ -186,16 +186,21 @@ class _ManeuverCard extends StatelessWidget {
     );
   }
 
-  static String _subtitle(Maneuver m) {
+  static String _subtitle(Maneuver m, Landmark? landmark) {
     final street = m.announceStreet;
     if (m.exitNumber != null) {
       return 'مخرج ${m.exitNumber}'
           '${m.exitToward.isEmpty ? '' : ' باتجاه ${m.exitToward.first}'}';
     }
-    // 8% فقط من طرق العراق مسمّاة في OSM، فالاسم غائب غالباً — نكتب
-    // «كمّل على طريقك» لا سطراً فارغاً
-    if (street == null) return m.isArrival ? 'وجهتك' : 'كمّل على طريقك';
-    return m.isArrival ? street : 'إلى $street';
+    if (street != null) return m.isArrival ? street : 'إلى $street';
+
+    // 9% فقط من طرق العراق مسمّاة، فالمعلم هو ما يحمل التعليمة غالباً
+    if (landmark != null) {
+      return m.isArrival
+          ? 'وجهتك عند ${landmark.name}'
+          : '${landmark.preposition} ${landmark.name}';
+    }
+    return m.isArrival ? 'وجهتك' : 'كمّل على طريقك';
   }
 }
 

@@ -53,7 +53,7 @@ class AppState extends ChangeNotifier {
 
   late final ReportsRepo reports = ReportsRepo(api);
   late final NavEngine nav = NavEngine(
-      location: location, voice: voice, api: api);
+      location: location, voice: voice, api: api, search: search);
 
   // ── حالة الإقلاع ─────────────────────────────────────────────────────────
 

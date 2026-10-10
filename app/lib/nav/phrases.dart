@@ -98,12 +98,56 @@ String maneuverTitle(Maneuver m) {
   }
 }
 
-/// الجملة الكاملة المكتوبة: الفعل + الشارع أو اللوحة.
-String maneuverDetail(Maneuver m) {
+/// معلم قرب المناورة، يُستعمل حين لا اسم للشارع.
+///
+/// ═══ قرارك ═══
+/// 9% فقط من طرق العراق مسمّاة. وقِسنا على خمسة مسارات في خمس مدن:
+/// التعليمات التي فيها اسم شارع 46%، وبإضافة المعالم 83%. فالمعلم نصف
+/// التعليمات لا زينة.
+///
+/// وهو أقرب لطريقة العراقي في الدلالة أصلاً: «لفّ يمين عند الجامع»
+/// أوضح من «انعطف يميناً إلى الشارع 60» حتى لو عرفنا اسم الشارع.
+/// موضع المعلم من نقطة المناورة على المسار.
+enum LandmarkWhere {
+  /// يمرّ به السائق ثم ينعطف — «بعد الجامع، انعطف يمين»
+  before,
+
+  /// المناورة عنده — «انعطف يمين عند الجامع»
+  at,
+
+  /// المناورة قبل الوصول إليه — «انعطف يمين قبل الجامع»
+  after,
+}
+
+class Landmark {
+  final String name;
+  final LandmarkWhere where;
+
+  const Landmark(this.name, {this.where = LandmarkWhere.at});
+
+  /// حرف الجرّ المناسب لموضعه.
+  ///
+  /// الثلاثة ضرورية لا تجميلية: «انعطف عند الجامع» والجامع بعد التقاطع
+  /// بمئة متر تجعل السائق يتجاوز التقاطع وهو يبحث عنه.
+  String get preposition => switch (where) {
+        LandmarkWhere.before => 'بعد',
+        LandmarkWhere.at => 'عند',
+        LandmarkWhere.after => 'قبل',
+      };
+}
+
+/// الجملة الكاملة المكتوبة: الفعل + الشارع أو المعلم أو اللوحة.
+String maneuverDetail(Maneuver m, {Landmark? landmark}) {
   final title = maneuverTitle(m);
   final street = m.announceStreet;
 
-  if (m.isArrival) return title;
+  if (m.isArrival) {
+    // الوصول بمعلم يطمئن السائق أنه في المكان الصحيح
+    if (street == null && landmark != null) {
+      return '$title — وجهتك عند ${landmark.name}';
+    }
+    return title;
+  }
 
   // رقم المخرج أهم من اسم الشارع على الطرق السريعة: اللوحة تحمل الرقم
   // والسائق يبحث عنه بعينه
@@ -112,44 +156,69 @@ String maneuverDetail(Maneuver m) {
     return '$title — مخرج ${m.exitNumber}$toward';
   }
 
-  if (street == null) return title;
+  if (street != null) {
+    // «كمّل مستقيم على شارع فلان» لا «إلى»: أنت فيه أصلاً ولا تدخله
+    final prep = (m.type == Mnv.continueOn || m.type == Mnv.becomes ||
+            m.type == Mnv.stayStraight)
+        ? 'على'
+        : 'إلى';
+    return '$title $prep $street';
+  }
 
-  // «كمّل مستقيم على شارع فلان» لا «كمّل مستقيم إلى شارع فلان»: أنت فيه
-  // أصلاً ولا تدخله
-  final prep = (m.type == Mnv.continueOn || m.type == Mnv.becomes ||
-          m.type == Mnv.stayStraight)
-      ? 'على'
-      : 'إلى';
-  return '$title $prep $street';
+  // لا اسم شارع: المعلم يحلّ محلّه
+  if (landmark != null) {
+    return '$title ${landmark.preposition} ${landmark.name}';
+  }
+
+  return title;
 }
 
 /// الجملة الصوتية. المرحلة تحدّد الإسهاب:
 ///   0 = تمهيد بعيد، 1 = تأكيد، 2 = تنفيذ الآن
-String maneuverVoice(Maneuver m, double distanceM, int stage) {
+String maneuverVoice(Maneuver m, double distanceM, int stage,
+    {Landmark? landmark}) {
   if (m.isArrival) {
-    if (stage == 2) return 'وصلت وجهتك';
+    if (stage == 2) {
+      return landmark == null
+          ? 'وصلت وجهتك'
+          : 'وصلت وجهتك عند ${landmark.name}';
+    }
     return 'وجهتك بعد ${distanceText(distanceM)}';
   }
 
   final title = maneuverTitle(m);
   final street = m.announceStreet;
 
+  // الشارع أولاً، والمعلم بديله حين يغيب. ما نجمعهما: جملة فيها اسم
+  // شارع واسم معلم أطول من أن تُسمع قبل التقاطع
+  final where = street != null
+      ? ' إلى $street'
+      : landmark != null
+          ? ' ${landmark.preposition} ${landmark.name}'
+          : '';
+
   switch (stage) {
     case 0:
       // التمهيد: المسافة أولاً كي يعرف السائق أن المناورة ليست الآن
-      final where = street == null ? '' : ' إلى $street';
       return 'بعد ${distanceText(distanceM)}، $title$where';
 
     case 1:
       if (m.exitNumber != null) {
         return 'بعد ${distanceText(distanceM)}، $title من مخرج ${m.exitNumber}';
       }
-      return 'بعد ${distanceText(distanceM)}، $title';
+      // المعلم في التأكيد مفيد: السائق يبحث عنه بعينه الآن
+      return 'بعد ${distanceText(distanceM)}، $title'
+          '${street != null ? '' : where}';
 
     default:
       // التنفيذ: أقصر ما يمكن. السائق عند التقاطع ولا وقت لجملة طويلة
       if (m.type == Mnv.roundaboutEnter && m.roundaboutExitCount != null) {
         return '${_ordinal(m.roundaboutExitCount!)} مخرج';
+      }
+      // المعلم يبقى في التنفيذ حين لا اسم شارع: «انعطف يمين» وحدها عند
+      // تقاطع مزدوج تترك السائق يحزر أيّهما
+      if (street == null && landmark != null) {
+        return '$title ${landmark.preposition} ${landmark.name}';
       }
       return title;
   }

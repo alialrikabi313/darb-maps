@@ -14,6 +14,7 @@ import '../config.dart';
 import '../core/api_client.dart';
 import '../core/geo.dart';
 import '../core/location_service.dart';
+import '../core/search.dart';
 import '../reports/reports.dart';
 import 'map_matcher.dart';
 import 'phrases.dart';
@@ -36,6 +37,10 @@ class NavState {
   final Maneuver? current;
   final Maneuver? next;
   final double distanceToManeuverM;
+
+  /// معلم المناورة القادمة، حين لا اسم لشارعها. 9% فقط من طرق العراق
+  /// مسمّاة، فهذا نصف التعليمات لا زينة.
+  final Landmark? nextLandmark;
 
   final double remainingM;
   final double remainingS;
@@ -61,6 +66,7 @@ class NavState {
     this.current,
     this.next,
     this.distanceToManeuverM = 0,
+    this.nextLandmark,
     this.remainingM = 0,
     this.remainingS = 0,
     this.eta,
@@ -79,10 +85,14 @@ class NavEngine {
   final Voice voice;
   final ApiClient api;
 
+  /// قاعدة البحث المحلية — نستخرج منها معالم المناورات.
+  final PoiSearch search;
+
   NavEngine({
     required this.location,
     required this.voice,
     required this.api,
+    required this.search,
   });
 
   final _out = StreamController<NavState>.broadcast();
@@ -102,6 +112,10 @@ class NavEngine {
 
   /// البلاغات التي نبّهنا عليها — لا ننبّه مرتين على نفس الحادث.
   final Set<int> _alertedReports = {};
+
+  /// معلم كل مناورة، محسوب مرة عند بدء المسار. حسابه في كل قراءة GPS
+  /// يعني استعلاماً مكانياً كل خمسة أمتار بلا أي فائدة — المعالم ثابتة.
+  List<Landmark?> _landmarks = const [];
 
   List<Report> _reports = const [];
 
@@ -124,6 +138,8 @@ class NavEngine {
     _rerouteAttempts = 0;
     voice.resetHistory();
 
+    _landmarks = await _resolveLandmarks(route);
+
     _emit(NavState(
       phase: NavPhase.navigating,
       route: route,
@@ -140,9 +156,74 @@ class NavEngine {
 
     // التعليمة الأولى تُنطق فوراً: السائق واقف ويبي يعرف من وين يبدأ
     if (route.maneuvers.isNotEmpty) {
-      await voice.say(maneuverVoice(route.maneuvers.first, 0, 2));
+      await voice.say(maneuverVoice(route.maneuvers.first, 0, 2,
+          landmark: _landmarkAt(0)));
     }
   }
+
+  /// يستخرج معلماً لكل مناورة بلا اسم شارع.
+  ///
+  /// مرة واحدة عند بدء المسار: المعالم ثابتة، واستعلام مكاني لكل قراءة
+  /// GPS يعني واحداً كل خمسة أمتار بلا فائدة.
+  ///
+  /// نحسب أيضاً هل المعلم قبل نقطة المناورة أو عندها — الفرق بين
+  /// «بعد محطة الوقود، انعطف» و«انعطف عند محطة الوقود»، وهو فرق يهمّ
+  /// السائق فعلاً.
+  Future<List<Landmark?>> _resolveLandmarks(NavRoute route) async {
+    final out = <Landmark?>[];
+
+    for (final m in route.maneuvers) {
+      // المناورة المسمّاة ما تحتاج معلماً — الاسم أدقّ منه
+      if (m.announceStreet != null || m.exitNumber != null) {
+        out.add(null);
+        continue;
+      }
+
+      final at = m.shape.isEmpty ? null : m.shape.first;
+      if (at == null) {
+        out.add(null);
+        continue;
+      }
+
+      // 180م لا 110: شخّصنا التعليمات العارية على ثمانية مسارات فوجدنا
+      // أن أكثرها لها معلم بين 110 و200م. والبعد ما يضرّ ما دام حرف
+      // الجرّ يصحّح الموضع
+      final place = await search.landmarkNear(at, radiusM: 180);
+      if (place == null) {
+        out.add(null);
+        continue;
+      }
+
+      // نفس المعلم مرتين يربك: «انعطف يمين عند أسواق حمودي» ثم بعد
+      // تعليمتين «انعطف يمين عند أسواق حمودي» — السائق يظن أنه رجع
+      // لنفس المكان. نقارن بآخر معلم استُعمل لا بآخر مدخل، لأن تعليمة
+      // عارية بينهما كانت تكسر المقارنة
+      final lastUsed = out.lastWhere((l) => l != null, orElse: () => null);
+      if (lastUsed?.name == place.title) {
+        out.add(null);
+        continue;
+      }
+
+      // موضع المعلم من المناورة: نُسقط الاثنين على المسار ونقارن
+      // المسافة المقطوعة. الهامش 35م — المعلم على نفس التقاطع «عنده»
+      final atOnRoute = projectOnLine(at, route.shape);
+      final lmOnRoute = projectOnLine(place.pos, route.shape);
+      final delta = lmOnRoute.traveledM - atOnRoute.traveledM;
+
+      final where = delta < -35
+          ? LandmarkWhere.before
+          : delta > 35
+              ? LandmarkWhere.after
+              : LandmarkWhere.at;
+
+      out.add(Landmark(place.title, where: where));
+    }
+
+    return out;
+  }
+
+  Landmark? _landmarkAt(int index) =>
+      index >= 0 && index < _landmarks.length ? _landmarks[index] : null;
 
   Future<void> stop() async {
     await _sub?.cancel();
@@ -185,7 +266,7 @@ class NavEngine {
     final nextManeuver = route.maneuvers[nextIdx];
 
     await _maybeAnnounce(nextIdx, nextManeuver, m.distanceToManeuverM,
-        fix.speedKmh);
+        fix.speedKmh, _landmarkAt(nextIdx));
 
     final alert = _pickAlert(fix, route);
     if (alert != null) await _maybeAlert(alert.$1, alert.$2);
@@ -201,6 +282,7 @@ class NavEngine {
       current: route.maneuvers[idx],
       next: nextManeuver,
       distanceToManeuverM: m.distanceToManeuverM,
+      nextLandmark: _landmarkAt(nextIdx),
       remainingM: m.remainingM,
       remainingS: remainingS,
       eta: DateTime.now().add(Duration(seconds: remainingS.round())),
@@ -217,8 +299,8 @@ class NavEngine {
   /// ثلاث مراحل من البعيد للقريب: تمهيد، تأكيد، تنفيذ. وعلى الطرق
   /// السريعة تُضاعَف المسافات: 300 متر بسرعة 100 كم/س هي عشر ثوان، وهي
   /// متأخّرة جداً لمن يبي يغيّر مساراً.
-  Future<void> _maybeAnnounce(
-      int idx, Maneuver m, double distanceM, double speedKmh) async {
+  Future<void> _maybeAnnounce(int idx, Maneuver m, double distanceM,
+      double speedKmh, Landmark? landmark) async {
     final scale = speedKmh >= Cfg.highwaySpeedKmh
         ? Cfg.highwayAnnounceMultiplier
         : 1.0;
@@ -240,7 +322,7 @@ class NavEngine {
       }
 
       _announcedStage[idx] = stage;
-      await voice.say(maneuverVoice(m, distanceM, stage),
+      await voice.say(maneuverVoice(m, distanceM, stage, landmark: landmark),
           cooldown: Cfg.announceCooldown, interrupt: stage == 2);
       return;
     }
