@@ -36,7 +36,8 @@ import collections
 
 from config import (
     IRAQ_PBF, SAMPLE_PBF, POI_DB, STREET_INFER_RADIUS_M,
-    STREET_INFER_MIN_VOTES, STREET_INFER_MIN_SHARE, ensure_dirs,
+    STREET_INFER_MIN_VOTES, STREET_INFER_MIN_SHARE,
+    POI_CATEGORY_LABELS, ensure_dirs,
 )
 from arabic import normalize, fts_text
 
@@ -331,7 +332,7 @@ def _row(rid: int, osm_id: int, name: str, norm: str, lon: float, lat: float,
         "tags": json.dumps(tags, ensure_ascii=False),
         "source": source,
         "terms": fts_text(name if arabic else "", "" if arabic else name,
-                          "شارع"),
+                          POI_CATEGORY_LABELS["street"]),
     }
 
 

@@ -20,7 +20,7 @@ const _quickCategories = <(String, String, IconData)>[
   ('fuel', 'وقود', Icons.local_gas_station),
   ('hospital', 'مستشفى', Icons.local_hospital),
   ('pharmacy', 'صيدلية', Icons.local_pharmacy),
-  ('restaurant', 'مطعم', Icons.restaurant),
+  ('restaurant', 'مطعم ومقهى', Icons.restaurant),
   ('market', 'سوق', Icons.shopping_bag),
   ('mosque', 'جامع', Icons.mosque),
 ];

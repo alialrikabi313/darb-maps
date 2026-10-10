@@ -14,6 +14,7 @@
 """
 
 import math
+import random
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Query
@@ -30,6 +31,10 @@ from ..settings import (
 
 router = APIRouter(prefix="/traffic", tags=["زحام"])
 
+# سقف المعرّفات في طلب واحد. بلاه يقبل الطلب قائمة بمئة ألف معرّف
+# وتبني منها قاعدة البيانات IN ضخمة
+_MAX_SEGMENT_IDS = 500
+
 # صنف الطريق عند Valhalla رقم لا نصّ. الترتيب من أعلى صنف لأدناه
 _ROAD_CLASS_NAMES = {
     0: "motorway", 1: "trunk", 2: "primary", 3: "secondary", 4: "tertiary",
@@ -37,7 +42,8 @@ _ROAD_CLASS_NAMES = {
 }
 
 
-def free_speed_for(road_class: int, valhalla_speed: float | None) -> float:
+def free_speed_for(road_class: int | None,
+                   valhalla_speed: float | None) -> float:
     """السرعة الحرّة المرجعية لقطعة.
 
     نفضّل سرعة Valhalla إذا كانت موجودة لأنها من maxspeed في OSM؛ وإذا ما
@@ -117,8 +123,13 @@ async def submit_trace(body: TraceIn,
         return {"stored": 0, "reason": "ما طابقنا الرحلة على أي طريق"}
 
     # سرعة كل قطعة: متوسط سرعات نقاط GPS التي تقع عليها. نستخدم سرعة GPS
-    # لا المسافة÷الزمن لأن دوبلر أدقّ من تفاضل موقعين مضطربين
-    now = datetime.now(timezone.utc)
+    # لا المسافة÷الزمن لأن دوبلر أدقّ من تفاضل موقعين مضطربين.
+    #
+    # الختم يُقرَّب للدقيقة ويُبعثَر: ختم واحد بدقّة الميكروثانية على كل
+    # صفوف الإرسالة كان مفتاح رحلة — استعلام واحد بـobserved_at يجمع
+    # قطع السائق، وترتيب id التسلسلي يعيد بناء مساره. وهذا ينقض وعد
+    # «لا معرّف رحلة» الذي بُنيت عليه الميزة
+    minute = datetime.now(timezone.utc).replace(second=0, microsecond=0)
     rows = []
     for e in edges:
         i0 = e.get("begin_shape_index")
@@ -132,14 +143,25 @@ async def submit_trace(body: TraceIn,
         if not speeds:
             continue
 
+        # السرعة الحرّة المرجعية تُلتقط هنا من الحافة نفسها.
+        # كانت تُثبَّت على 30 للأبد في التجميع، فيُصنَّف زحام طريق
+        # المطار (حرّ 100) عند 25 كم/س «سالكاً» لأن 25/30 = 0.83 —
+        # والميزة تقول عكس الحقيقة في أهمّ مكان
         rows.append({"way_id": way_id,
                      "speed": sum(speeds) / len(speeds),
-                     "at": now})
+                     "free": free_speed_for(e.get("road_class"),
+                                            e.get("speed_limit")
+                                            or e.get("speed")),
+                     "at": minute})
 
     if rows:
+        # نبعثر الترتيب قبل الإدخال: معرّفات bigserial متتالية كانت
+        # تحفظ ترتيب القطع، وهو مسار الرحلة بعينه
+        random.shuffle(rows)
         conn.execute(text("""
-            INSERT INTO traffic_sample (way_id, speed_kmh, observed_at)
-            VALUES (:way_id, :speed, :at)
+            INSERT INTO traffic_sample (way_id, speed_kmh, free_speed_kmh,
+                                        observed_at)
+            VALUES (:way_id, :speed, :free, :at)
         """), rows)
 
     # الجزء من الأثر الذي ما غطّته أي حافة = طريق ناقص من الخريطة.
@@ -158,11 +180,18 @@ def aggregate(conn: Connection = Depends(get_conn)) -> dict:
     التطبيق يطلب حالة الزحام عشرات المرات في الدقيقة أثناء الملاحة،
     وتجميعها في كل طلب يحرق القاعدة.
 
-    السرعة الحرّة المرجعية ما نعرفها هنا — القراءات ما تحمل صنف الطريق.
-    نحتفظ بالمرجع من أول مرة حُسبت فيه القطعة، وإن لم يكن نفترض سكنياً.
+    السرعة الحرّة المرجعية تجي مع القراءة نفسها (التُقطت من حافة
+    ڤالهالا وقت الاستقبال). كانت تُثبَّت على 30 هنا فيُصنَّف زحام
+    الطريق السريع «سالكاً».
     """
     rows = conn.execute(text("""
-        SELECT way_id, AVG(speed_kmh) AS avg_kmh, COUNT(*) AS n
+        SELECT way_id,
+               AVG(speed_kmh) AS avg_kmh,
+               -- الوسيط أمتن من المتوسط لمرجع ثابت: قراءة شاذة واحدة
+               -- بسرعة 200 تُفسد المتوسط وتجعل الطريق «مزدحماً» دائماً
+               percentile_disc(0.5) WITHIN GROUP (ORDER BY free_speed_kmh)
+                   AS free_kmh,
+               COUNT(*) AS n
         FROM traffic_sample
         WHERE observed_at > now() - make_interval(mins => :ttl)
         GROUP BY way_id
@@ -170,12 +199,9 @@ def aggregate(conn: Connection = Depends(get_conn)) -> dict:
     """), {"ttl": TRAFFIC_SAMPLE_TTL_MIN,
            "minn": TRAFFIC_MIN_SAMPLES}).fetchall()
 
-    known = dict(conn.execute(
-        text("SELECT way_id, free_speed_kmh FROM traffic_state")).fetchall())
-
     payload = []
     for r in rows:
-        free = known.get(r.way_id) or float(DEFAULT_FREE_SPEED_KMH["residential"])
+        free = float(r.free_kmh or DEFAULT_FREE_SPEED_KMH["residential"])
         payload.append({
             "way_id": r.way_id, "avg": r.avg_kmh, "free": free,
             "level": level_for(r.avg_kmh, free), "n": r.n,
@@ -189,6 +215,9 @@ def aggregate(conn: Connection = Depends(get_conn)) -> dict:
             ON CONFLICT (way_id) DO UPDATE SET
                 level = EXCLUDED.level,
                 avg_speed_kmh = EXCLUDED.avg_speed_kmh,
+                -- المرجع يُحدَّث أيضاً: تثبيته من أول مرة كان يعني أن
+                -- تصحيح maxspeed في OSM لا يصل إلينا أبداً
+                free_speed_kmh = EXCLUDED.free_speed_kmh,
                 samples = EXCLUDED.samples,
                 updated_at = now()
         """), payload)
@@ -214,7 +243,15 @@ def segments(
     ليش بـway_id لا بـbbox: مسار السائق معروف، وتلوين كل قطع المدينة
     ينقل ميغابايتات ما يرسم منها إلا خطّه
     """
-    ids = [int(x) for x in way_ids.split(",") if x.strip().lstrip("-").isdigit()]
+    # الفحص بـlstrip("-") كان يقبل «--5» ثم ينهار int() عليه بـ500.
+    # نحوّل ونتجاهل الفاشل بدل ما نفحص بالشكل
+    ids: list[int] = []
+    for token in way_ids.split(",")[:_MAX_SEGMENT_IDS]:
+        try:
+            ids.append(int(token.strip()))
+        except ValueError:
+            continue
+
     if not ids:
         return []
 

@@ -22,6 +22,10 @@ class Place {
   final int id;
   final String? nameAr;
   final String? nameEn;
+
+  /// الاسم المطبّع كما فُهرس. نحتاجه لترجيح التطابق التام في الترتيب
+  /// النهائي — إعادة تطبيعه في Dart تخاطر بأن يفترق عن المفهرس.
+  final String? nameNorm;
   final String category;
   final String? subtype;
   final LatLng pos;
@@ -41,6 +45,7 @@ class Place {
     required this.id,
     required this.nameAr,
     required this.nameEn,
+    this.nameNorm,
     required this.category,
     required this.subtype,
     required this.pos,
@@ -72,19 +77,25 @@ class Place {
   /// نسخة بالاسم مقصوصاً — تُستعمل للمعالم المنطوقة فقط، فالبحث
   /// والخريطة يعرضان الاسم الكامل.
   Place renamed(String shortName) => Place(
-        id: id, nameAr: shortName, nameEn: nameEn, category: category,
+        id: id, nameAr: shortName, nameEn: nameEn, nameNorm: nameNorm,
+        category: category,
         subtype: subtype, pos: pos, rank: rank, tags: tags,
         source: source, distanceM: distanceM,
       );
 
   Place withDistance(double d) => Place(
-        id: id, nameAr: nameAr, nameEn: nameEn, category: category,
+        id: id, nameAr: nameAr, nameEn: nameEn, nameNorm: nameNorm,
+        category: category,
         subtype: subtype, pos: pos, rank: rank, tags: tags,
         source: source, distanceM: d,
       );
 }
 
-/// تسميات عربية للتصنيفات. تُعرض تحت اسم النتيجة.
+/// تسميات عربية للتصنيفات — تُعرض تحت اسم النتيجة.
+///
+/// هذي نسخة احتياطية للعرض فقط. المصدر الحقيقي جدول `search_meta` في
+/// نفس القاعدة (`PoiSearch.categoryLabels`)، لأن نفس التسميات تدخل
+/// فهرس البحث في بايثون — ونسختان تفترقان بعد أول تعديل.
 const Map<String, String> categoryLabels = {
   'place': 'منطقة',
   'street': 'شارع',
@@ -112,14 +123,25 @@ class PoiSearch {
   String _stripChars = '';
   RegExp? _stripRe;
 
+  /// تسميات التصنيفات كما فُهرست في بايثون.
+  Map<String, String> categoryLabelsFromDb = const {};
+
   // البادئات (ال، مستشفى، شارع…) ما نحتاجها وقت البحث: سكربت الاستخراج
   // فهرس الاسم كاملاً وكلماته منزوعة البادئة معاً، ومطابقة البادئة في
   // FTS تمسكها. نقرأها من القاعدة ولا نخزّنها — وجودها هناك توثيق لما
   // فُهرس به، لا مدخل لحساب هنا
 
   // كل ما ليس حرفاً عربياً أو لاتينياً أو رقماً هو فاصل: OSM يستخدم «-»
-  // و«/» و«،» بلا اتساق في نفس المدينة
-  static final _sepRe = RegExp(r'[^؀-ۿ\w]+', unicode: true);
+  // و«/» و«،» بلا اتساق في نفس المدينة.
+  //
+  // `\w` في Dart محصور بـASCII دائماً (يتبع ECMAScript، و`unicode: true`
+  // لا يوسّعه)، بخلاف بايثون حيث يشمل اليونيكود. فكان «Şeqlawe Pîrmam»
+  // يُفهرس كاملاً في بايثون ويتفتّت في الجهاز — والأسماء الكردية
+  // والتركية المنقولة بلاتينية في شمال العراق كانت تعطي صفر نتائج.
+  // نسمّي النطاقات اللاتينية الممتدة صراحةً
+  static final _sepRe = RegExp(
+      r'[^؀-ۿA-Za-z0-9_À-ɏḀ-ỿ]+',
+      unicode: true);
 
   Future<void> open(List<Pack> packs) async {
     for (final p in packs) {
@@ -140,6 +162,12 @@ class PoiSearch {
     _normMap = (jsonDecode(meta['normalize_map'] ?? '{}') as Map)
         .map((k, v) => MapEntry('$k', '$v'));
     _stripChars = meta['strip_chars'] ?? '';
+
+    final labels = meta['category_labels'];
+    if (labels != null) {
+      categoryLabelsFromDb = (jsonDecode(labels) as Map)
+          .map((k, v) => MapEntry('$k', '$v'));
+    }
 
     if (_stripChars.isNotEmpty) {
       _stripRe = RegExp('[${RegExp.escape(_stripChars)}]');
@@ -171,14 +199,17 @@ class PoiSearch {
     final andQuery = tokens.map((t) => '"$t"*').join(' ');
     final orQuery = tokens.map((t) => '"$t"*').join(' OR ');
 
-    final out = <int, Place>{};
+    final out = <String, Place>{};
 
     for (final db in _dbs) {
       for (final q in [andQuery, if (tokens.length > 1) orQuery]) {
         if (out.length >= Cfg.searchLimit) break;
         final rows = await _run(db, q, norm, Cfg.searchLimit);
         for (final p in rows) {
-          out.putIfAbsent(p.id, () => p);
+          // المفتاح يشمل اسم الحزمة: معرّفات poi.id متسلسلة داخل كل
+          // قاعدة بدءاً من 1، فحزمتان على الجهاز تتصادم معرّفاتهما
+          // و`putIfAbsent` كان يُسقط نتيجة الثانية بصمت
+          out.putIfAbsent('${db.path}#${p.id}', () => p);
         }
       }
     }
@@ -194,7 +225,19 @@ class PoiSearch {
       // 300 متر أنفع من واحدة بنفس الاسم في الجهة الثانية من بغداد.
       // ما نرتّب بالمسافة وحدها: «بغداد» على بعد 5 كم تبقى أهم من زقاق
       // على بعد 100 متر
+      // التطابق التام يتقدّم على القرب دائماً: من يكتب «جامعة بغداد»
+      // كاملة يريدها هي، لا «عيادة جامعة بغداد» الأقرب إليه.
+      // الفرز بالرتبة والمسافة وحدهما كان يلغي ترجيح التطابق الذي
+      // بُني في SQL ويُفحص في tools/06
       results.sort((a, b) {
+        final exactA = a.nameNorm == norm ? 1 : 0;
+        final exactB = b.nameNorm == norm ? 1 : 0;
+        if (exactA != exactB) return exactB - exactA;
+
+        final prefixA = (a.nameNorm?.startsWith(norm) ?? false) ? 1 : 0;
+        final prefixB = (b.nameNorm?.startsWith(norm) ?? false) ? 1 : 0;
+        if (prefixA != prefixB) return prefixB - prefixA;
+
         final byRank = (b.rank ~/ 20).compareTo(a.rank ~/ 20);
         if (byRank != 0) return byRank;
         return (a.distanceM ?? 0).compareTo(b.distanceM ?? 0);
@@ -209,8 +252,8 @@ class PoiSearch {
   Future<List<Place>> _run(
       Database db, String match, String norm, int limit) async {
     final rows = await db.rawQuery('''
-      SELECT p.id, p.name_ar, p.name_en, p.category, p.subtype, p.lat, p.lon,
-             p.rank, p.tags, p.source
+      SELECT p.id, p.name_ar, p.name_en, p.name_norm, p.category, p.subtype,
+             p.lat, p.lon, p.rank, p.tags, p.source
       FROM poi_fts f JOIN poi p ON p.id = f.rowid
       WHERE poi_fts MATCH ?
       ORDER BY
@@ -243,8 +286,8 @@ class PoiSearch {
 
     for (final db in _dbs) {
       final rows = await db.rawQuery('''
-        SELECT p.id, p.name_ar, p.name_en, p.category, p.subtype, p.lat, p.lon,
-               p.rank, p.tags, p.source
+        SELECT p.id, p.name_ar, p.name_en, p.name_norm, p.category,
+               p.subtype, p.lat, p.lon, p.rank, p.tags, p.source
         FROM poi_geo g JOIN poi p ON p.id = g.id
         WHERE g.min_lon >= ? AND g.max_lon <= ?
           AND g.min_lat >= ? AND g.max_lat <= ?
@@ -346,8 +389,8 @@ class PoiSearch {
 
     for (final db in _dbs) {
       final rows = await db.rawQuery('''
-        SELECT p.id, p.name_ar, p.name_en, p.category, p.subtype, p.lat,
-               p.lon, p.rank, p.tags, p.source
+        SELECT p.id, p.name_ar, p.name_en, p.name_norm, p.category, p.subtype,
+               p.lat, p.lon, p.rank, p.tags, p.source
         FROM poi_geo g JOIN poi p ON p.id = g.id
         WHERE g.min_lon >= ? AND g.max_lon <= ?
           AND g.min_lat >= ? AND g.max_lat <= ?
@@ -399,6 +442,7 @@ class PoiSearch {
         id: r['id'] as int,
         nameAr: r['name_ar'] as String?,
         nameEn: r['name_en'] as String?,
+        nameNorm: r['name_norm'] as String?,
         category: r['category'] as String,
         subtype: r['subtype'] as String?,
         pos: LatLng(r['lat'] as double, r['lon'] as double),

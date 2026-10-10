@@ -14,7 +14,6 @@ import 'theme.dart';
 /// أيقونة لكل تصنيف — نفس خريطة الدبابيس كي لا تختلف البطاقة عن الخريطة.
 IconData placeIcon(String category) => switch (category) {
       'restaurant' => Icons.restaurant,
-      'cafe' => Icons.local_cafe,
       'pharmacy' => Icons.local_pharmacy,
       'fuel' => Icons.local_gas_station,
       'hospital' => Icons.local_hospital,

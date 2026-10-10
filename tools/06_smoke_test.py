@@ -587,6 +587,48 @@ def check_traffic() -> None:
        f"{round(base / 60)} دقيقة → {round(withjam / 60)} دقيقة")
 
     check_road_candidates(pts, now)
+    check_long_route()
+
+
+def check_long_route() -> None:
+    """مسار بين محافظتين — يكشف حدود المطابقة.
+
+    انهار فعلاً قبل الإصلاح: 1200 نقطة من مسار البصرة ← دهوك = 284 كم،
+    وValhalla يرفض /trace_attributes فوق حدّ المسافة (error_code 154).
+    فكانت المسارات الطويلة تفقد حدود السرعة وتلوين الزحام كلياً وصامتاً
+    — المسار يصل سليماً والميزتان تختفيان.
+    """
+    r = requests.post(f"{API_URL}/route", json={
+        "locations": [{"lat": 30.5085, "lon": 47.7804},   # البصرة
+                      {"lat": 36.8670, "lon": 42.9880}],  # دهوك
+        "alternates": 0}, timeout=180)
+
+    if r.status_code != 200:
+        die("مسار بين محافظتين", f"HTTP {r.status_code} — {r.text[:150]}")
+
+    trip = r.json()["trip"]
+    km = trip["summary"]["length"]
+    maneuvers = trip["legs"][0]["maneuvers"]
+    with_ways = [m for m in maneuvers if m.get("way_ids")]
+    traffic = trip.get("traffic", {})
+
+    if km < 800:
+        die("مسار البصرة ← دهوك", f"{km:.0f} كم — أقصر من المعقول")
+
+    if not with_ways:
+        die("مطابقة المسار الطويل",
+            f"مسار {km:.0f} كم وصفر مناورة لها معرّفات طرق — "
+            f"المطابقة تجاوزت حدّ مسافة ڤالهالا. افحص _MAX_TRACE_KM")
+
+    frac = traffic.get("matched_fraction")
+    if frac is None:
+        die("إعلان نسبة المطابقة",
+            "الرد ما فيه matched_fraction — التطبيق ما يقدر يفرّق بين "
+            "«ما طابقنا» و«طابقنا وما عندنا قراءات»")
+
+    ok("مسار بين محافظتين",
+       f"{km:.0f} كم، {len(with_ways)}/{len(maneuvers)} مناورة لها "
+       f"معرّفات، طابقنا {int(frac * 100)}% من المسافة")
 
 
 def check_road_candidates(route_pts: list, now: float) -> None:

@@ -28,7 +28,6 @@ const String destImageName = 'darb-dest';
 /// أيقونة كل تصنيف نقاط اهتمام — نفس أيقونات شرائح الاستكشاف.
 const Map<String, IconData> _poiIcons = {
   'restaurant': Icons.restaurant,
-  'cafe': Icons.local_cafe,
   'pharmacy': Icons.local_pharmacy,
   'fuel': Icons.local_gas_station,
   'hospital': Icons.local_hospital,

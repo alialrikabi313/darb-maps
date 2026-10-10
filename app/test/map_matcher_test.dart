@@ -240,6 +240,8 @@ void main() {
     });
   });
 
+  oppositeCarriagewayTests();
+
   group('مسار منحلّ', () {
     test('مسار بنقطة واحدة ما يرمي استثناء', () {
       // يحدث لو كانت الوجهة هي موقع المستخدم نفسه
@@ -247,6 +249,103 @@ void main() {
       final r = m.update(const LatLng(33.30, 44.40));
       expect(r.traveledM, 0);
       expect(r.offRoute, isFalse);
+    });
+  });
+}
+
+// ── الكاريجوي المقابل ──────────────────────────────────────────────────────
+//
+// أخطر ما كشفه التدقيق: الجزيرة الوسطية 10–25م وعتبة الخروج 40م، فقطعة
+// الاتجاه المعاكس داخل العتبة دائماً. قراءة منحرفة عشرة أمتار كانت تنقل
+// المؤشّر لقطعة الرجوع ويبقى هناك — السهم يسير عكس اتجاه السائق،
+// والمسافة المتبقّية تزيد كلما تقدّم، وكل المناورات تضيع.
+
+void oppositeCarriagewayTests() {
+  /// طريق مزدوج: ذهاب شمالاً، استدارة، رجوع جنوباً بجزيرة 15 متراً.
+  List<LatLng> doubleCarriageway() {
+    const lon = 44.40000;
+    const lonBack = 44.40016; // ≈15م شرقاً
+    return [
+      for (var i = 0; i <= 10; i++) LatLng(33.30000 + i * 0.00045, lon),
+      for (var i = 10; i >= 0; i--) LatLng(33.30000 + i * 0.00045, lonBack),
+    ];
+  }
+
+  group('الالتصاق بالكاريجوي المقابل', () {
+    test('قراءة منحرفة شرقاً لا تنقل المؤشّر لقطعة الرجوع', () {
+      final shape = doubleCarriageway();
+      final m = MapMatcher(routeFrom(shape));
+
+      // نسير شمالاً حتى منتصف الذهاب
+      for (var i = 0; i <= 5; i++) {
+        m.update(shape[i], headingDeg: 0, speedKmh: 50);
+      }
+      final before = m.update(shape[5], headingDeg: 0, speedKmh: 50);
+
+      // قراءة منحرفة 10م شرقاً — تقع أقرب لقطعة الرجوع
+      final drift = LatLng(shape[5].latitude, shape[5].longitude + 0.00011);
+      final after = m.update(drift, headingDeg: 0, speedKmh: 50);
+
+      // اتجاهنا شمال (0°) وقطعة الرجوع جنوب (180°) فتُرفض
+      expect(after.traveledM, closeTo(before.traveledM, 60),
+          reason: 'قفز للكاريجوي المقابل: '
+              '${before.traveledM} → ${after.traveledM}');
+    });
+
+    test('المتبقّي ينقص مع التقدّم ولا يزيد', () {
+      final shape = doubleCarriageway();
+      final m = MapMatcher(routeFrom(shape));
+      var last = double.infinity;
+
+      for (var i = 0; i <= 10; i++) {
+        final r = m.update(shape[i], headingDeg: 0, speedKmh: 50);
+        expect(r.remainingM, lessThanOrEqualTo(last + 1),
+            reason: 'المتبقّي زاد عند النقطة $i');
+        last = r.remainingM;
+      }
+    });
+
+    test('بعد الاستدارة نقبل قطعة الرجوع', () {
+      final shape = doubleCarriageway();
+      final m = MapMatcher(routeFrom(shape));
+
+      for (var i = 0; i <= 10; i++) {
+        m.update(shape[i], headingDeg: 0, speedKmh: 50);
+      }
+      // الآن نسير جنوباً (180°) على قطعة الرجوع
+      final back = m.update(shape[13], headingDeg: 180, speedKmh: 50);
+
+      expect(back.deviationM, lessThan(Cfg.offRouteThresholdM));
+      expect(back.traveledM, greaterThan(lineLength(shape) * 0.5));
+    });
+
+    test('تحت عتبة السرعة نتجاهل الاتجاه ولا ننهار', () {
+      // GPS ما يعرف اتجاهك وأنت واقف
+      final shape = doubleCarriageway();
+      final m = MapMatcher(routeFrom(shape));
+      final r = m.update(shape[3], headingDeg: 0, speedKmh: 2);
+      expect(r.offRoute, isFalse);
+    });
+
+    test('بلا اتجاه معطى يشتغل كما كان', () {
+      final shape = doubleCarriageway();
+      final m = MapMatcher(routeFrom(shape));
+      final r = m.update(shape[3]);
+      expect(r.deviationM, lessThan(1));
+    });
+  });
+
+  group('سقف القفزة', () {
+    test('قفزة غير معقولة بين قراءتين تُرفض', () {
+      final shape = doubleCarriageway();
+      final m = MapMatcher(routeFrom(shape));
+      m.update(shape[2], headingDeg: 0, speedKmh: 50);
+      final before = m.update(shape[3], headingDeg: 0, speedKmh: 50);
+
+      // نقطة قرب نهاية المسار — قفزة تتجاوز السقف
+      final jumped = m.update(shape[18], headingDeg: 0, speedKmh: 50);
+      expect((jumped.traveledM - before.traveledM).abs(), lessThan(300),
+          reason: 'قبل قفزة ${jumped.traveledM - before.traveledM}م');
     });
   });
 }

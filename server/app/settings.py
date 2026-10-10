@@ -25,13 +25,24 @@ from config import (  # noqa: E402  — لازم بعد تعديل sys.path
     VALHALLA_URL, API_PORT, pg_dsn,
 )
 
-# سرّ توقيع التوكن. في التطوير قيمة ثابتة ليبقى التوكن صالحاً بعد إعادة
-# التشغيل؛ في الإنتاج يُفرض من البيئة وإلا نموت — سرّ تطوير في الإنتاج
-# يعني أن أي أحد يصنع توكن جهاز
-IS_PROD = os.getenv("DARB_ENV") == "production"
-JWT_SECRET = os.getenv("DARB_JWT_SECRET", "" if IS_PROD else "dev-secret-darb")
-if IS_PROD and not JWT_SECRET:
-    sys.exit("DARB_JWT_SECRET مطلوب في الإنتاج — لا تشغّل بسرّ التطوير")
+# سرّ توقيع التوكن.
+#
+# الفحص معكوس عمداً: التطوير هو ما يحتاج إعلاناً صريحاً، لا الإنتاج.
+# كان `IS_PROD = DARB_ENV == "production"` فأي نشر بـDARB_ENV غير مضبوط
+# أو مكتوب «prod» أو «Production» يسقط على السرّ المكتوب في هذا الملف
+# داخل الريبو — وبه يُزوَّر توكن أي جهاز، ويُتجاوَز الحظر، ويُفتح CORS
+# للجميع. أي أن الخطأ الأشيع (نسيان متغيّر) كان يعطي أسوأ نتيجة.
+IS_DEV = os.getenv("DARB_DEV") == "1"
+JWT_SECRET = os.getenv("DARB_JWT_SECRET", "dev-secret-darb" if IS_DEV else "")
+
+if not JWT_SECRET:
+    sys.exit(
+        "DARB_JWT_SECRET مطلوب.\n"
+        "  للإنتاج:  اضبط DARB_JWT_SECRET بسرّ عشوائي طويل\n"
+        "  للتطوير:  اضبط DARB_DEV=1 لاستخدام سرّ التطوير المعروف"
+    )
+
+IS_PROD = not IS_DEV
 
 JWT_ALG = "HS256"
 # التوكن طويل العمر: الجهاز ما عنده كلمة مرور يجدّد بها، وانتهاؤه يعني
@@ -42,8 +53,9 @@ DB_DSN = os.getenv("DARB_DB_DSN", pg_dsn())
 
 # أصل الطلبات: التطبيق جوّال فما يرسل Origin، والسماح الكامل هنا يخصّ
 # صفحة المعاينة في التطوير فقط
-CORS_ORIGINS = ["*"] if not IS_PROD else os.getenv(
-    "DARB_CORS_ORIGINS", "").split(",")
+CORS_ORIGINS = ["*"] if IS_DEV else [
+    o for o in os.getenv("DARB_CORS_ORIGINS", "").split(",") if o
+]
 
 __all__ = [
     "REPORT_TYPES", "REPORT_DOWNVOTE_DECAY", "REPORT_SHOW_UNCONFIRMED",

@@ -11,7 +11,7 @@
 import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
@@ -69,8 +69,12 @@ def new_device(conn: Connection = Depends(get_conn)) -> DeviceOut:
 
 
 @app.get("/roads/candidates")
-def road_candidates(limit: int = 100,
-                    conn: Connection = Depends(get_conn)) -> dict:
+def road_candidates(
+    # بلا حدّ: limit=-1 ينهار على «LIMIT must not be negative» بـ500،
+    # وlimit ضخم يرجّع آلاف خطوط GeoJSON
+    limit: int = Query(default=100, ge=1, le=500),
+    conn: Connection = Depends(get_conn),
+) -> dict:
     """الطرق التي يمرّ بها الناس وما تعرفها الخريطة.
 
     مخرجها مُعدّ للتحرير في OSM: من يفتحها يرى أين يرسم. هذا ما يسدّ

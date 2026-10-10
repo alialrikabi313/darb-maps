@@ -27,8 +27,9 @@ import argparse
 
 from config import (
     IRAQ_PBF, SAMPLE_PBF, POI_DB, POI_CATEGORIES, POI_REQUIRE_NAME,
-    POI_DEDUP_RADIUS_M, PLACE_VALUES, ARABIC_NORMALIZE_MAP,
-    ARABIC_STRIP_CHARS, SEARCH_STOP_PREFIXES, ensure_dirs,
+    POI_DEDUP_RADIUS_M, POI_CATEGORY_LABELS, STREET_SAME_RADIUS_M,
+    PLACE_VALUES, ARABIC_NORMALIZE_MAP, ARABIC_STRIP_CHARS,
+    SEARCH_STOP_PREFIXES, ensure_dirs,
 )
 from arabic import normalize, fts_text
 
@@ -64,7 +65,12 @@ CREATE TABLE IF NOT EXISTS poi (
     lat       REAL NOT NULL,
     lon       REAL NOT NULL,
     rank      INTEGER NOT NULL,
-    tags      TEXT                    -- JSON
+    tags      TEXT,                   -- JSON
+    -- المصدر مع كل صفّ لا في سطر واحد: المراحل ٠٨ و٠٩ تضيف نقاطاً من
+    -- Overture ومن عناوين المباني، والتطبيق يستعلم عن هذا العمود.
+    -- كان يُضاف في ٠٨ فقط، فتشغيل ٠٤ وحده يكسر كل بحث في التطبيق
+    -- بـ«no such column: p.source»
+    source    TEXT NOT NULL DEFAULT 'osm'
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS poi_osm ON poi(osm_type, osm_id);
@@ -99,9 +105,13 @@ _SEARCHABLE_HIGHWAYS = {
 }
 
 # الشوارع المكرّرة: شارع واحد في OSM مقطّع عشرات القطع بنفس الاسم. نحفظ
-# أول قطعة لكل اسم في كل مدينة ونهمل الباقي — المستخدم يبي يوصل الشارع
-# لا قطعة بعينها منه
-_seen_streets: set[str] = set()
+# قطعة واحدة لكل اسم **في كل منطقة** ونهمل الباقي — المستخدم يبي يوصل
+# الشارع لا قطعة بعينها منه.
+#
+# كان المفتاح الاسم وحده على كل العراق، فـ«شارع الجمهورية» في بغداد
+# يمحو نظيره في البصرة والموصل. قِسناه: 27,538 اسماً كلها نسخة واحدة.
+# الآن المفتاح (الاسم، الإحداثيات) ونقارن بالمسافة
+_seen_streets: dict[str, list[tuple[float, float]]] = {}
 
 # وسم التصنيف المعاكس: من (tag, value) إلى تصنيفنا، نبنيه مرة من config
 _TAG_TO_CATEGORY: dict[tuple[str, str], str] = {}
@@ -122,6 +132,8 @@ def init_db(path) -> sqlite3.Connection:
         "normalize_map": json.dumps(ARABIC_NORMALIZE_MAP, ensure_ascii=False),
         "strip_chars": ARABIC_STRIP_CHARS,
         "stop_prefixes": json.dumps(SEARCH_STOP_PREFIXES, ensure_ascii=False),
+        "category_labels": json.dumps(POI_CATEGORY_LABELS,
+                                      ensure_ascii=False),
         "built_at": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
     con.executemany("INSERT OR REPLACE INTO search_meta VALUES (?,?)",
@@ -287,7 +299,10 @@ def extract(pbf, con: sqlite3.Connection) -> dict[str, int]:
             "lon": lon,
             "rank": rank_of(category, subtype, tags),
             "tags": keep_tags(tags),
-            "terms": fts_text(name_ar or "", name_en or "", subtype),
+            # التسمية العربية للتصنيف لا قيمة OSM الإنجليزية: من يكتب
+            # «بنزين» يريد كل محطات الوقود لا التي اسمها يحتويها
+            "terms": fts_text(name_ar or "", name_en or "",
+                              POI_CATEGORY_LABELS.get(category, "")),
         })
         next_id += 1
 
@@ -313,12 +328,21 @@ def extract(pbf, con: sqlite3.Connection) -> dict[str, int]:
             if hw in _SEARCHABLE_HIGHWAYS:
                 name_ar, name_en = pick_names(tags)
                 key = normalize(name_ar or name_en or "")
-                if key and key not in _seen_streets:
-                    _seen_streets.add(key)
-                    c = way_center(obj)
-                    if c:
-                        add("w", obj.id, "street", hw, tags, c[0], c[1])
-                        stats["streets"] += 1
+                if not key:
+                    continue
+
+                c = way_center(obj)
+                if c is None:
+                    continue
+
+                placed = _seen_streets.setdefault(key, [])
+                if any(_meters_between(c[0], c[1], plon, plat)
+                       < STREET_SAME_RADIUS_M for plon, plat in placed):
+                    continue
+
+                placed.append(c)
+                add("w", obj.id, "street", hw, tags, c[0], c[1])
+                stats["streets"] += 1
                 continue
 
             cls = classify(tags)
@@ -356,7 +380,7 @@ _SEARCH_CASES = [
     ("مطار", "مطار بغداد الدولي"),
     ("جامعه بغداد", "تاء مربوطة مكتوبة هاء — وكلمتان لازم تتطابقا معاً"),
     ("الكرادة", "منطقة"),
-    ("بنزين", "محطة وقود — بحث بالتصنيف لا بالاسم"),
+    ("بنزين", "بحث بالتصنيف — لازم يرجّع محطات وقود لا أسماء تحتوي الكلمة"),
 ]
 
 
@@ -465,6 +489,10 @@ def main() -> None:
     try_search(con)
 
     con.execute("VACUUM")
+    # WAL يبقى في ترويسة الملف بعد الإغلاق، وقاعدة بوضع WAL تحتاج إنشاء
+    # ملف -shm قبل أول قراءة — والتطبيق يفتحها readOnly فما يقدر ينشئه.
+    # DELETE يجعل الملف مكتفياً بنفسه، وهو ما نشحنه
+    con.execute("PRAGMA journal_mode = DELETE")
     con.close()
     size = POI_DB.stat().st_size
     print(f"\n  حجم القاعدة: {size / 1024 / 1024:.1f}MB")

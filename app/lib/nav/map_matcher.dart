@@ -32,6 +32,10 @@ class MatchResult {
   /// هل السائق خارج المسار الآن (بعد تأكيد عدّة قراءات).
   final bool offRoute;
 
+  /// فهرس القطعة التي سقط عليها الموقع — تستخدمه فلترة البلاغات كي
+  /// تبحث من موضعنا لا من أول المسار.
+  final int segmentIndex;
+
   const MatchResult({
     required this.snapped,
     required this.deviationM,
@@ -40,6 +44,7 @@ class MatchResult {
     required this.maneuverIndex,
     required this.distanceToManeuverM,
     required this.offRoute,
+    required this.segmentIndex,
   });
 }
 
@@ -60,7 +65,25 @@ class MapMatcher {
 
   MapMatcher(this.route);
 
-  MatchResult update(LatLng pos) {
+  /// آخر مسافة مقطوعة مقبولة. نرفض قفزة أكبر مما تسمح به السرعة.
+  double _lastTraveled = 0;
+
+  /// أقصى فرق زاوي بين اتجاه السائق واتجاه القطعة قبل رفضها.
+  ///
+  /// بلا هذي البوابة كانت المطابقة تلتصق بالكاريجوي المقابل: الجزيرة
+  /// الوسطية 10–25م وعتبة الخروج 40م، فالاتجاه المعاكس داخل العتبة
+  /// دائماً. قراءة GPS واحدة منحرفة عشرة أمتار تنقل المؤشّر لقطعة
+  /// الرجوع، ويبقى هناك لأن انحرافه الجديد تحت العتبة فلا بحث كامل
+  /// ولا إعلان خروج. النتيجة: السهم يسير عكس اتجاه السائق، والمسافة
+  /// المتبقّية تزيد كلما تقدّم، وكل المناورات تضيع.
+  static const double _maxHeadingDiff = 65.0;
+
+  /// معامل أقصى قفزة: السرعة × الزمن × هذا. ما نقدر نعرف الزمن بين
+  /// قراءتين هنا، فنستخدم سقفاً مطلقاً معايَراً على أسوأ حالة
+  /// (120 كم/س × 3 ثوان ≈ 100م) مع هامش
+  static const double _maxJumpM = 250.0;
+
+  MatchResult update(LatLng pos, {double? headingDeg, double? speedKmh}) {
     // نبحث في نافذة أمام المؤشّر أولاً — الحالة الغالبة
     var proj = projectOnLine(pos, route.shape,
         searchFrom: _cursor, searchWindow: _window);
@@ -72,7 +95,28 @@ class MapMatcher {
       if (full.distanceM < proj.distanceM) proj = full;
     }
 
+    // بوابة الاتجاه: نرفض إسقاطاً على قطعة تسير عكس السائق. نطبّقها
+    // فوق عتبة السرعة فقط — تحتها اتجاه GPS لا يُوثق به
+    final trustHeading = headingDeg != null &&
+        (speedKmh ?? 0) >= Cfg.headingFromGpsMinSpeedKmh;
+
+    if (trustHeading && _segmentOpposes(proj.segmentIndex, headingDeg)) {
+      // نبحث قطعة موافقة للاتجاه في النافذة
+      final aligned = _nearestAligned(pos, headingDeg);
+      if (aligned != null) proj = aligned;
+    }
+
+    // سقف القفزة: قفزة أكبر من المعقول بين قراءتين تعني مطابقة على
+    // مرور آخر لنفس الشارع، لا تقدّماً حقيقياً
+    final jump = (proj.traveledM - _lastTraveled).abs();
+    if (_lastTraveled > 0 && jump > _maxJumpM) {
+      final near = projectOnLine(pos, route.shape,
+          searchFrom: _cursor, searchWindow: 20);
+      if (near.distanceM <= Cfg.offRouteThresholdM) proj = near;
+    }
+
     _cursor = proj.segmentIndex;
+    _lastTraveled = proj.traveledM;
 
     final offNow = proj.distanceM > Cfg.offRouteThresholdM;
     // لا نعلن الخروج من أول قراءة: قراءة GPS شاذة تحدث كل دقيقة، وإعادة
@@ -93,6 +137,7 @@ class MapMatcher {
         maneuverIndex: 0,
         distanceToManeuverM: remaining,
         offRoute: false,
+        segmentIndex: proj.segmentIndex,
       );
     }
 
@@ -109,7 +154,48 @@ class MapMatcher {
       maneuverIndex: idx,
       distanceToManeuverM: toManeuver,
       offRoute: _offRouteStreak >= Cfg.offRouteConsecutiveFixes,
+      segmentIndex: proj.segmentIndex,
     );
+  }
+
+  /// هل تسير القطعة عكس اتجاه السائق.
+  bool _segmentOpposes(int index, double headingDeg) {
+    if (index + 1 >= route.shape.length) return false;
+    final segBearing =
+        bearingBetween(route.shape[index], route.shape[index + 1]);
+    return headingDiff(segBearing, headingDeg) > _maxHeadingDiff;
+  }
+
+  /// أقرب قطعة في النافذة تسير باتجاه السائق.
+  LineProjection? _nearestAligned(LatLng pos, double headingDeg) {
+    final start = _cursor.clamp(0, route.shape.length - 2);
+    final end = (start + _window).clamp(1, route.shape.length - 1);
+
+    Projection? best;
+    var bestDist = double.infinity;
+    var bestIndex = start;
+
+    for (var i = start; i < end; i++) {
+      if (_segmentOpposes(i, headingDeg)) continue;
+      final pr = projectOnSegment(pos, route.shape[i], route.shape[i + 1]);
+      if (pr.distanceM < bestDist) {
+        bestDist = pr.distanceM;
+        best = pr;
+        bestIndex = i;
+      }
+    }
+
+    if (best == null || bestDist > Cfg.offRouteThresholdM) return null;
+
+    var traveled = 0.0;
+    for (var i = 0; i < bestIndex; i++) {
+      traveled += metersBetween(route.shape[i], route.shape[i + 1]);
+    }
+    traveled +=
+        metersBetween(route.shape[bestIndex], route.shape[bestIndex + 1]) *
+            best.t;
+
+    return LineProjection(best.point, best.distanceM, bestIndex, traveled);
   }
 
   /// المناورة التي نحن داخلها الآن بناءً على المسافة المقطوعة.

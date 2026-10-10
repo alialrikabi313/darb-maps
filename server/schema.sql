@@ -70,6 +70,10 @@ CREATE TABLE traffic_sample (
     id          bigserial PRIMARY KEY,
     way_id      bigint NOT NULL,          -- معرّف OSM للطريق من Valhalla
     speed_kmh   real NOT NULL,
+    -- السرعة الحرّة المرجعية، تُلتقط من حافة Valhalla وقت الاستقبال.
+    -- كانت تُثبَّت على 30 في التجميع فيُصنَّف زحام طريق المطار (حرّ 100)
+    -- عند 25 كم/س «سالكاً» — الميزة تقول عكس الحقيقة في أهمّ مكان
+    free_speed_kmh real,
     observed_at timestamptz NOT NULL
 );
 
@@ -104,6 +108,8 @@ CREATE TABLE road_closure (
 );
 
 CREATE INDEX road_closure_geo ON road_closure USING GIST (geom);
+-- يُقرأ في كل طلب توجيه (WHERE expires_at > now()) فبلا فهرس مسح كامل
+CREATE INDEX road_closure_expires ON road_closure (expires_at);
 
 -- ── طرق مرشّحة ─────────────────────────────────────────────────────────────
 -- أثر GPS مرّ من مكان لا يعرف Valhalla فيه طريقاً = طريق ناقص من الخريطة.
@@ -128,8 +134,11 @@ CREATE TABLE road_candidate (
 );
 
 CREATE INDEX road_candidate_geo ON road_candidate USING GIST (geom);
-CREATE INDEX road_candidate_hits ON road_candidate (hits DESC)
-    WHERE NOT is_promoted;
+-- الفهرس على المُرقّى لا على غيره: الاستعلام الوحيد الذي يرتّب بـhits
+-- هو /roads/candidates وهو WHERE is_promoted. الشرط المعكوس كان يستبعد
+-- كل صفّ يطلبه الاستعلام
+CREATE INDEX road_candidate_hits ON road_candidate (hits DESC, length_m DESC)
+    WHERE is_promoted;
 
 -- ── دالة التنظيف ───────────────────────────────────────────────────────────
 -- تُنادى من وظيفة دورية. ما جعلناها trigger لأن الحذف وقت الكتابة يبطّئ
@@ -149,6 +158,13 @@ BEGIN
     GET DIAGNOSTICS s = ROW_COUNT;
 
     DELETE FROM road_closure WHERE expires_at < now();
+
+    -- المرشّحون يحملون مسار GPS خاماً — أخطر هندسة عندنا. وعد الاحتفاظ
+    -- سبعة أيام ما كان يشملهم. نحذف غير المرقّى القديم؛ المرقّى يبقى
+    -- لأنه صار معلومة خريطة لا أثر رحلة
+    DELETE FROM road_candidate
+     WHERE NOT is_promoted
+       AND last_seen < now() - make_interval(days => retention_days);
 
     RETURN QUERY SELECT r, s;
 END;

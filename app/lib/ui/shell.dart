@@ -28,9 +28,21 @@ class Shell extends StatefulWidget {
 
 class _ShellState extends State<Shell> {
   DarbTab _tab = DarbTab.map;
+  bool _hooked = false;
 
   @override
   Widget build(BuildContext context) {
+    // اختيار وجهة من أي تبويب يرجعنا للخريطة: ورقة المسار لا تُبنى إلا
+    // في تبويب الخريطة، فبلا هذا يبقى المستخدم أمام شاشة لم تتغيّر
+    if (!_hooked) {
+      _hooked = true;
+      context.read<AppState>().onDestinationChosen = () {
+        if (mounted && _tab != DarbTab.map) {
+          setState(() => _tab = DarbTab.map);
+        }
+      };
+    }
+
     final app = context.watch<AppState>();
 
     if (app.fatalError != null) return FatalScreen(message: app.fatalError!);
@@ -117,28 +129,36 @@ class _BottomNav extends StatelessWidget {
       ),
       child: SafeArea(
         top: false,
+        // الارتفاع يشمل بروز الزرّ: اختبار اللمس في Flutter يرفض أي
+        // نقطة خارج حدود الأب، فكان ثلث الزرّ الأعلى لا يستقبل اللمس
+        // وتمرّ اللمسة للخريطة تحته → حساب مسار لنقطة عشوائية
         child: SizedBox(
-          height: 66,
+          height: 92,
           child: Stack(
             clipBehavior: Clip.none,
-            alignment: Alignment.center,
             children: [
-              Row(
-                children: [
-                  for (final it in items.take(2))
-                    Expanded(child: _navItem(it)),
-                  // فراغ لزرّ الإبلاغ العائم في الوسط
-                  const SizedBox(width: 74),
-                  for (final it in items.skip(2))
-                    Expanded(child: _navItem(it)),
-                ],
+              // الصفّ في أسفل المساحة، والزرّ يطفو فوقه
+              Positioned(
+                left: 0, right: 0, bottom: 0, height: 66,
+                child: Row(
+                  children: [
+                    // عنصران يمين الفراغ وعنصران يساره: القسمة تتعادل
+                    // فيقع الفراغ في المنتصف تماماً. كانت ٢ مقابل ٣
+                    // فينزاح الزرّ ويغطّي أيقونة تبويب
+                    for (final it in items.take(2))
+                      Expanded(child: _navItem(it)),
+                    const SizedBox(width: 76),
+                    for (final it in items.skip(2))
+                      Expanded(child: _navItem(it)),
+                  ],
+                ),
               ),
 
-              // زرّ الإبلاغ: أسود دائري يطفو فوق الشريط. وضعه في الوسط
-              // بقصد — هو الفعل الوحيد الذي يسويه السائق وهو واقف بالزحام
+              // زرّ الإبلاغ: أسود دائري في وسط الفراغ المحجوز له. هو
+              // الفعل الوحيد الذي يسويه السائق وهو واقف بالزحام
               Positioned(
-                top: -22,
-                child: _ReportFab(onTap: onReport),
+                left: 0, right: 0, top: 0,
+                child: Center(child: _ReportFab(onTap: onReport)),
               ),
             ],
           ),

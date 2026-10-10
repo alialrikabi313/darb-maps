@@ -32,9 +32,13 @@ class ManeuverIcon extends StatelessWidget {
       );
     }
 
+    final uturn = _isUturn(type);
     return CustomPaint(
       size: Size.square(size),
-      painter: _ArrowPainter(color, _turnAngle(type), _isUturn(type),
+      painter: _ArrowPainter(
+          color,
+          uturn ? _uturnSide(type) : _turnAngle(type),
+          uturn,
           _isMerge(type)),
     );
   }
@@ -68,6 +72,9 @@ class ManeuverIcon extends StatelessWidget {
   static bool _isUturn(int t) =>
       t == Mnv.uturnLeft || t == Mnv.uturnRight;
 
+  /// جهة الالتفاف: سالب يسار، موجب يمين — يقرأها رسّام حرف U
+  static double _uturnSide(int t) => t == Mnv.uturnRight ? 1 : -1;
+
   static bool _isMerge(int t) =>
       t == Mnv.merge || t == Mnv.mergeLeft || t == Mnv.mergeRight;
 }
@@ -95,14 +102,20 @@ class _ArrowPainter extends CustomPainter {
     final path = Path();
 
     if (uturn) {
-      // ساق صاعد، نصف دائرة، ثم نزول — شكل حرف U مقلوب
-      path.moveTo(w * 0.68, h * 0.9);
-      path.lineTo(w * 0.68, h * 0.42);
-      path.arcToPoint(Offset(w * 0.32, h * 0.42),
-          radius: Radius.circular(w * 0.18), clockwise: false);
-      path.lineTo(w * 0.32, h * 0.62);
+      // ساق صاعد، نصف دائرة، ثم نزول — شكل حرف U مقلوب.
+      // الجهة تتبع نوع المناورة: uturnRight و uturnLeft كانا يُرسمان
+      // شكلاً واحداً يلتفّ يساراً
+      final toLeft = angleDeg <= 0;
+      final up = toLeft ? w * 0.68 : w * 0.32;
+      final down = toLeft ? w * 0.32 : w * 0.68;
+
+      path.moveTo(up, h * 0.9);
+      path.lineTo(up, h * 0.42);
+      path.arcToPoint(Offset(down, h * 0.42),
+          radius: Radius.circular(w * 0.18), clockwise: !toLeft);
+      path.lineTo(down, h * 0.62);
       canvas.drawPath(path, paint);
-      _arrowHead(canvas, paint, Offset(w * 0.32, h * 0.62), 180, w);
+      _arrowHead(canvas, paint, Offset(down, h * 0.62), 180, w);
       return;
     }
 
@@ -203,12 +216,22 @@ class _RoundaboutPainter extends CustomPainter {
     canvas.drawLine(Offset(w * 0.5, h * 0.95),
         Offset(w * 0.5, c.dy + r), paint);
 
-    // ذراع الخروج: زاويته من رقم المخرج. الدوّارات العراقية غالباً
-    // ثلاثة أو أربعة مخارج، فنوزّعها على ثلاثة أرباع الدائرة
-    final n = exitNumber ?? 2;
-    final angle = math.pi * 0.5 - (n.clamp(1, 6) * math.pi * 0.42);
-    final tip = Offset(c.dx + math.cos(angle) * r * 2.2,
-        c.dy - math.sin(angle) * r * 2.2);
+    // ذراع الخروج: زاويته من رقم المخرج.
+    //
+    // الخطوة كانت 0.42π فالمخرج الثاني يقع عند −61° (أسفل-يمين) أي
+    // **خلف** السائق، والثالث عند −137°. فكل مخرج غير الأول كان يُرسم
+    // مشيراً للجهة التي جاء منها — في أهمّ مناورة بُني هذا الرسّام لأجلها.
+    //
+    // 0.5π/خطوة توزّع المخارج على الربع الأيمن فالأعلى فالأيسر:
+    // الأول يمين (0°)، الثاني أمام (90°)، الثالث يسار (180°) — وهو
+    // ترتيب الدوّار الفعلي في السير على اليمين
+    final n = (exitNumber ?? 2).clamp(1, 5);
+    final angle = (n - 1) * math.pi * 0.5 - math.pi * 0.0;
+
+    // 1.7r لا 2.2r: الطرف كان يخرج من مربّع الرسم ومن الدائرة
+    // النعناعية حوله بلا قصّ
+    final tip = Offset(c.dx + math.cos(angle) * r * 1.7,
+        c.dy - math.sin(angle) * r * 1.7);
 
     canvas.drawLine(
         Offset(c.dx + math.cos(angle) * r, c.dy - math.sin(angle) * r),

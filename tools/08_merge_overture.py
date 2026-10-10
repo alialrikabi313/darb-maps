@@ -38,7 +38,7 @@ from config import (
     POI_DB, OVERTURE_S3, OVERTURE_DIR, OVERTURE_PLACES, OVERTURE_COUNTRY,
     OVERTURE_RELEASE,
     OVERTURE_MIN_CONFIDENCE, OVERTURE_DEDUP_RADIUS_M, POI_DEDUP_RADIUS_M,
-    ensure_dirs,
+    POI_CATEGORY_LABELS, ensure_dirs,
 )
 from arabic import normalize, fts_text
 
@@ -348,7 +348,9 @@ def merge(con: sqlite3.Connection, candidates: list[dict],
         rank = base_rank.get(c["category"], 10)
         # الثقة ترفع الرتبة قليلاً: نقطة بثقة 0.9 أرجح من واحدة بـ0.35
         rank += int(round(c["confidence"] * 4))
-        if c["tags"] and "phone" in c["tags"]:
+        # الفحص على المفتاح لا على نصّ JSON: «phone» ككلمة تظهر في
+        # موقع phonehouse.iq فترفع الرتبة بلا رقم هاتف
+        if c["tags"] and "phone" in json.loads(c["tags"]):
             rank += 2
 
         rows.append({
@@ -368,8 +370,10 @@ def merge(con: sqlite3.Connection, candidates: list[dict],
             "rank": rank,
             "tags": _with_gers(c["tags"], c["gers"]),
             "source": c["source"],
+            # التسمية العربية للتصنيف لا قيمة Overture الإنجليزية:
+            # «fashion_and_apparel_store» ما يبحث بها أحد
             "terms": fts_text(c["name_ar"] or "", c["name_en"] or "",
-                              c["subtype"] or ""),
+                              POI_CATEGORY_LABELS.get(c["category"], "")),
         })
         next_id += 1
         stats["added"] += 1

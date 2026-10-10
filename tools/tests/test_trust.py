@@ -51,42 +51,80 @@ class TestInitialExpiry:
 
 
 class TestDownvoteDecay:
-    def test_cuts_fraction_of_original_ttl(self):
+    """الحساب من وقت الإنشاء وبصافي الأصوات.
+
+    خللان كانا هنا واكتشفهما التدقيق:
+    ١. الخصم من **المتبقّي** يجعل نفياً واحداً يقتل أي بلاغ قديم.
+    ٢. التأييد ما كان يدخل الحساب إطلاقاً.
+    """
+
+    def test_one_downvote_cuts_fraction_of_ttl(self):
         ttl = REPORT_TYPES["pothole"]["ttl_min"]
-        start = _now() + timedelta(minutes=ttl)
+        created = _now()
 
-        after = trust.expiry_after_downvote("pothole", start, 1)
-        cut_min = (start - after).total_seconds() / 60
-        assert abs(cut_min - ttl * REPORT_DOWNVOTE_DECAY) < 1
+        after = trust.expiry_after_downvote("pothole", created, 1, 1)
+        life_min = (after - created).total_seconds() / 60
 
-    def test_cut_is_from_original_not_remaining(self):
-        # الخصم من المتبقّي يجعل أول نفي قاتلاً وآخر نفي بلا أثر — وهو
-        # مقلوب المطلوب. فالخصم ثابت المقدار
+        # صوت صاحب البلاغ لا يحميه، فالصافي = 1 نفي كامل
+        expected = ttl * (1 - REPORT_DOWNVOTE_DECAY)
+        assert abs(life_min - expected) < 1
+
+    def test_old_backed_report_survives_one_downvote(self):
+        """الخلل الأصلي: حفرة عمرها عشرة أيام يقتلها نفي واحد مهما
+        كان عدد مؤيّديها.
+
+        الخصم كان 0.35 × 14 يوماً = 4.9 يوم من **المتبقّي** (4 أيام)،
+        فتموت فوراً — والتأييد لم يكن يدخل الحساب إطلاقاً.
+
+        الآن: البلاغ القديم المؤيَّد يصمد، وغير المؤيَّد يموت. وهذا
+        هو المقصود — نفيٌ لم يعارضه أحد حكمٌ مقبول.
+        """
         ttl = REPORT_TYPES["pothole"]["ttl_min"]
-        fresh = _now() + timedelta(minutes=ttl)
-        old = _now() + timedelta(minutes=ttl * 0.9)
+        created = _now() - timedelta(minutes=ttl * 0.7)
 
-        cut_fresh = (fresh - trust.expiry_after_downvote(
-            "pothole", fresh, 1)).total_seconds()
-        cut_old = (old - trust.expiry_after_downvote(
-            "pothole", old, 1)).total_seconds()
-        assert abs(cut_fresh - cut_old) < 2
+        backed = trust.expiry_after_downvote("pothole", created, 6, 1)
+        assert backed > _now() + timedelta(hours=1),             "بلاغ قديم أيّده خمسة مستقلّين مات بنفي واحد"
+
+        lonely = trust.expiry_after_downvote("pothole", created, 1, 1)
+        assert lonely <= _now() + timedelta(seconds=2),             "بلاغ قديم بلا تأييد نجا من النفي"
+
+    def test_author_vote_does_not_protect(self):
+        """صاحب البلاغ لا يحمي بلاغه من تكذيب غيره.
+
+        البلاغ يبدأ بـup_votes=1 وهو صوت صاحبه. عدّه حمايةً كان يجعل
+        ثلاثة نفي لا تكفي لقتل بلاغ لم يؤيّده أحد غير صاحبه.
+        """
+        created = _now()
+        alone = trust.expiry_after_downvote("jam", created, 1, 2)
+        backed = trust.expiry_after_downvote("jam", created, 3, 2)
+        assert backed > alone
+
+    def test_upvotes_protect_against_downvotes(self):
+        """رادار أكّده عشرون سائقاً لا يقتله جهاز واحد."""
+        ttl = REPORT_TYPES["speed_camera"]["ttl_min"]
+        created = _now() - timedelta(minutes=ttl * 0.3)
+
+        lonely = trust.expiry_after_downvote("speed_camera", created, 1, 1)
+        backed = trust.expiry_after_downvote("speed_camera", created, 20, 1)
+
+        assert backed > lonely
+        assert backed > _now() + timedelta(days=1)
 
     def test_enough_downvotes_kill_immediately(self):
-        # ثلاثة أصوات نفي تقتل بلاغاً جديداً (0.35 × 3 > 1)
-        ttl = REPORT_TYPES["jam"]["ttl_min"]
-        exp = _now() + timedelta(minutes=ttl)
-
-        for n in range(1, 4):
-            exp = trust.expiry_after_downvote("jam", exp, n)
-
-        assert exp <= _now() + timedelta(seconds=2)
+        # ثلاثة نفي بلا تأييد تقتل بلاغاً جديداً (0.35 × 3 > 1)
+        created = _now()
+        assert trust.expiry_after_downvote("jam", created, 1, 3)             <= _now() + timedelta(seconds=2)
 
     def test_never_returns_past_time(self):
         # وقت انتهاء في الماضي يفسد فرز القاعدة. نرجّع «الآن» لا قبله
-        exp = _now() - timedelta(hours=5)
-        assert trust.expiry_after_downvote("crash", exp, 1) >= \
-            _now() - timedelta(seconds=2)
+        created = _now() - timedelta(days=30)
+        assert trust.expiry_after_downvote("crash", created, 1, 1) >=             _now() - timedelta(seconds=2)
+
+    def test_downvotes_accumulate(self):
+        created = _now()
+        one = trust.expiry_after_downvote("pothole", created, 1, 1)
+        two = trust.expiry_after_downvote("pothole", created, 1, 2)
+        assert two < one, "النفي الثاني ما أثّر"
 
 
 class TestConfirmation:

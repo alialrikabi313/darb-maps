@@ -307,7 +307,13 @@ class AppState extends ChangeNotifier {
 
   // ── الوجهة والمسار ───────────────────────────────────────────────────────
 
+  /// يُنادى حين تختار شاشة وجهةً من خارج تبويب الخريطة، كي يُعرض
+  /// المسار المحسوب. بلاه كان «اذهب الآن» في المحفوظة يحسب مساراً
+  /// (ونداء شبكة) ويبقى المستخدم في تبويبه وكأن الزرّ معطوب.
+  VoidCallback? onDestinationChosen;
+
   Future<void> chooseDestination(Destination d) async {
+    onDestinationChosen?.call();
     destination = d;
     previewedPlace = null;
     proposed = null;

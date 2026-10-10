@@ -24,17 +24,26 @@ from ..settings import (
 router = APIRouter(prefix="/reports", tags=["بلاغات"])
 
 
-def _to_out(row, distance_m: float | None = None,
-            cluster_size: int = 1) -> ReportOut:
+def _to_out(row, distance_m: float | None = None, cluster_size: int = 1,
+            up: int | None = None, down: int | None = None) -> ReportOut:
+    """يحوّل صفّاً إلى رد.
+
+    up/down يسمحان بتمرير أصوات المجموعة كلها بدل أصوات القائد وحده.
+    بلاهما كان الرد يتناقض مع نفسه: ثلاثة بلاغات حادث متجاورة بصوت
+    لكلٍّ منها تُعرض لأن أصوات المجموعة 3 (فوق عتبة التأكيد 2)، ويقول
+    نفس الرد `confirmed: false` لأن القائد وحده عنده صوت.
+    """
     age_min = (datetime.now(timezone.utc) - row.created_at).total_seconds() / 60
+    up = row.up_votes if up is None else up
+    down = row.down_votes if down is None else down
+
     return ReportOut(
         id=row.id, kind=row.kind, label=REPORT_TYPES[row.kind]["label"],
         lat=row.lat, lon=row.lon, heading=row.heading, note=row.note,
         created_at=row.created_at, expires_at=row.expires_at,
-        up_votes=row.up_votes, down_votes=row.down_votes,
-        confirmed=trust.is_confirmed(row.kind, row.up_votes, row.down_votes),
-        confidence=trust.confidence(row.kind, row.up_votes, row.down_votes,
-                                    age_min),
+        up_votes=up, down_votes=down,
+        confirmed=trust.is_confirmed(row.kind, up, down),
+        confidence=trust.confidence(row.kind, up, down, age_min),
         cluster_size=cluster_size, distance_m=distance_m,
     )
 
@@ -87,11 +96,11 @@ def create_report(
     conn.execute(text("UPDATE device SET reports_made = reports_made + 1 "
                       "WHERE id = :d"), {"d": device_id})
 
-    # طريق مغلق مؤكّد يدخل جدول الإغلاقات ليُحقن في حساب المسار. غير
-    # المؤكّد لا: إغلاق خاطئ يطوّح السائق كيلومترات، وكلفة الخطأ هنا أعلى
-    # بكثير من كلفة تفويت إغلاق حقيقي لدقائق
-    if body.kind == "road_closed" and trust.is_confirmed(body.kind, 1, 0):
-        _sync_closure(conn, row.id, body.lat, body.lon, expires)
+    # الإغلاق يدخل جدول الإغلاقات عند تأكيده بالتصويت لا عند إنشائه:
+    # إغلاق خاطئ يطوّح السائق كيلومترات، وكلفة الخطأ أعلى بكثير من
+    # كلفة تفويت إغلاق حقيقي لدقائق.
+    # كان هنا شرط `is_confirmed(kind, 1, 0)` ثابت الكذب لكل نوع
+    # (1 >= 3 مستحيل) — فرعٌ ميت يوهم القارئ أن للإنشاء مساراً
 
     return _to_out(row)
 
@@ -161,8 +170,10 @@ def reports_near(
                 and _heading_diff(heading, row.heading) > 90):
             continue
 
+        # نفس أصوات المجموعة التي حكمت الظهور تحكم التأكيد والثقة
         out.append(_to_out(row, distance_m=round(row.distance_m, 1),
-                           cluster_size=row.cluster_size))
+                           cluster_size=row.cluster_size,
+                           up=row.cluster_up, down=row.cluster_down))
     return out
 
 
@@ -208,26 +219,35 @@ def vote(
         raise HTTPException(status.HTTP_409_CONFLICT,
                             "صوّتت على هذا البلاغ سابقاً")
 
-    if body.is_up:
-        updated = conn.execute(text("""
-            UPDATE report SET up_votes = up_votes + 1 WHERE id = :i
-            RETURNING id, kind, heading, note, created_at, expires_at,
-                      up_votes, down_votes,
-                      ST_Y(geom::geometry) AS lat, ST_X(geom::geometry) AS lon
-        """), {"i": report_id}).one()
-    else:
-        new_expiry = trust.expiry_after_downvote(row.kind, row.expires_at,
-                                                 row.down_votes + 1)
-        updated = conn.execute(text("""
-            UPDATE report
-               SET down_votes = down_votes + 1,
-                   expires_at = :e,
-                   is_removed = (:e <= now())
-             WHERE id = :i
-            RETURNING id, kind, heading, note, created_at, expires_at,
-                      up_votes, down_votes,
-                      ST_Y(geom::geometry) AS lat, ST_X(geom::geometry) AS lon
-        """), {"i": report_id, "e": new_expiry}).one()
+    # نقفل صفّ البلاغ قبل الحساب: صوتان متزامنان كانا يقرآن نفس
+    # expires_at ويكتبان نفس الخصم، فينطبق خصم واحد بدل اثنين — وثلاثة
+    # نفي كان المفروض تقتل البلاغ تتركه حيّاً بـ65% من عمره
+    locked = conn.execute(text("""
+        SELECT created_at, up_votes, down_votes FROM report
+         WHERE id = :i FOR UPDATE
+    """), {"i": report_id}).one()
+
+    up = locked.up_votes + (1 if body.is_up else 0)
+    down = locked.down_votes + (0 if body.is_up else 1)
+
+    new_expiry = trust.expiry_after_downvote(row.kind, locked.created_at,
+                                             up, down)
+
+    updated = conn.execute(text("""
+        UPDATE report
+           SET up_votes = :up,
+               down_votes = :down,
+               expires_at = :e,
+               -- clock_timestamp لا now(): now() هي بداية المعاملة،
+               -- و:e مأخوذ من ساعة التطبيق بعدها بميلي ثانية، فالشرط
+               -- ما كان يصدق أبداً والبلاغ المقتول يبقى is_removed=false
+               is_removed = (:e <= clock_timestamp())
+         WHERE id = :i
+        RETURNING id, kind, heading, note, created_at, expires_at,
+                  up_votes, down_votes,
+                  ST_Y(geom::geometry) AS lat, ST_X(geom::geometry) AS lon
+    """), {"i": report_id, "up": up, "down": down,
+           "e": new_expiry}).one()
 
     if row.device_id is not None:
         conn.execute(text("UPDATE device SET reputation = reputation + :d "

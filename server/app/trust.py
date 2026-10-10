@@ -32,16 +32,37 @@ def initial_expiry(kind: str, reputation: int = 0) -> datetime:
     return datetime.now(timezone.utc) + timedelta(minutes=ttl * (1 + bonus))
 
 
-def expiry_after_downvote(kind: str, current: datetime,
-                          down_votes: int) -> datetime:
+def expiry_after_downvote(kind: str, created_at: datetime,
+                          up_votes: int, down_votes: int) -> datetime:
     """وقت الانتهاء الجديد بعد صوت نفي.
 
-    كل نفي يسحب نسبة ثابتة من الصلاحية الأصلية لا من المتبقّي: السحب من
-    المتبقّي يجعل أول نفي قاتلاً وآخر نفي بلا أثر، وهو مقلوب المطلوب.
+    نحسبه من وقت الإنشاء لا من المتبقّي، وبصافي الأصوات لا بعدد النفي
+    وحده. السبب خللان كانا هنا:
+
+    ١. طرح مقدار ثابت من **المتبقّي** يجعل النفي الواحد قاتلاً لأي بلاغ
+       قديم: حفرة عمرها عشرة أيام بقي لها أربعة، والخصم 4.9 يوم — فنفي
+       واحد يقتلها. جرّبناه فماتت فوراً.
+    ٢. التأييد ما كان يدخل الحساب إطلاقاً، فرادار أكّده عشرون سائقاً
+       يقتله جهاز واحد مجهول.
+
+    الآن: العمر المسموح = الصلاحية الأصلية مضروبة في معامل صافي الأصوات،
+    محسوبة من وقت الإنشاء. فالبلاغ المؤيَّد يصمد، والمنفيّ بلا تأييد
+    يموت بعد عدد النفي الذي قرّرناه في REPORT_DOWNVOTE_DECAY.
     """
-    cut = timedelta(minutes=ttl_minutes(kind) * REPORT_DOWNVOTE_DECAY)
-    new = current - cut
+    ttl = ttl_minutes(kind)
+
+    # صافي النفي: كل تأييد مستقلّ يلغي نصف نفي. نستثني صوت صاحب البلاغ
+    # (البلاغ يبدأ بـup_votes=1 وهو صوته) — لا يحمي نفسه من تكذيب غيره،
+    # وبلا الاستثناء كانت ثلاثة نفي لا تكفي لقتل بلاغ لم يؤيّده أحد.
+    # ونصف التأثير كي يبقى النفي أقوى: بلاغ خاطئ يُخرج السائق من طريقه
+    independent_up = max(0, up_votes - 1)
+    net_down = max(0.0, down_votes - independent_up * 0.5)
+
+    factor = max(0.0, 1.0 - net_down * REPORT_DOWNVOTE_DECAY)
+    allowed = timedelta(minutes=ttl * factor)
+
     now = datetime.now(timezone.utc)
+    new = created_at + allowed
 
     # النفي الكافي يقتل البلاغ فوراً لا يقرّبه من الموت
     return now if new <= now else new

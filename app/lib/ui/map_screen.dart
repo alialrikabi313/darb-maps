@@ -13,6 +13,7 @@ import 'package:provider/provider.dart';
 
 import '../config.dart';
 import '../core/packs.dart';
+import '../core/geo.dart';
 import '../core/search.dart';
 import '../nav/phrases.dart';
 import '../nav/route_model.dart';
@@ -47,6 +48,19 @@ class _MapCanvasState extends State<MapCanvas> {
   NavRoute? _drawnRoute;
   int _drawnReportsHash = 0;
   int _drawnPoisHash = 0;
+
+  /// حارس تعاكب على `_sync`.
+  ///
+  /// `_sync` سلسلة `await` عبر قناة المنصّة، و`notifyListeners` تُنادى
+  /// مرّات لكل قراءة GPS. بلا الحارس تدخل نسخة ثانية قبل انتهاء الأولى:
+  /// كلتاهما تريان `_carSymbol == null` فيُضاف سهما سيارة ويُحفظ مرجع
+  /// واحد — سهم يتيم مجمّد طول الرحلة. ونفس السباق يترك خطوط مسار
+  /// ودبابيس بلاغات بلا مرجع يحذفها.
+  bool _syncing = false;
+  bool _syncAgain = false;
+
+  LatLng? _lastCameraTarget;
+  double _lastCameraBearing = 0;
 
   @override
   Widget build(BuildContext context) {
@@ -129,11 +143,25 @@ class _MapCanvasState extends State<MapCanvas> {
     final c = _map;
     if (c == null || !_styleReady) return;
 
-    await _syncRoute(c, app);
-    await _syncReports(c, app);
-    await _syncPois(c, app);
-    await _syncCar(c, app);
-    await _syncCamera(c, app);
+    // نسخة تشتغل؟ نعلّم أن هناك تغييراً ينتظر بدل ما ندخل بالتوازي
+    if (_syncing) {
+      _syncAgain = true;
+      return;
+    }
+    _syncing = true;
+
+    try {
+      do {
+        _syncAgain = false;
+        await _syncRoute(c, app);
+        await _syncReports(c, app);
+        await _syncPois(c, app);
+        await _syncCar(c, app);
+        await _syncCamera(c, app);
+      } while (_syncAgain && mounted);
+    } finally {
+      _syncing = false;
+    }
   }
 
   Future<void> _syncRoute(MapLibreMapController c, AppState app) async {
@@ -172,8 +200,12 @@ class _MapCanvasState extends State<MapCanvas> {
       lineJoin: 'round',
     )));
 
-    final colored = route.maneuvers
-        .where((m) => m.trafficLevel != null && m.shape.length > 1);
+    // المفتاح يُقرأ هنا فعلاً: كان معروضاً في ورقة الطبقات ولا يفعل
+    // شيئاً — الرسم كان يلوّن دائماً
+    final colored = app.showTrafficLayer
+        ? route.maneuvers
+            .where((m) => m.trafficLevel != null && m.shape.length > 1)
+        : const <Maneuver>[];
 
     _routeLines.add(await c.addLine(LineOptions(
       geometry: route.shape,
@@ -310,6 +342,17 @@ class _MapCanvasState extends State<MapCanvas> {
         final target = nav.snapped ?? app.fix?.pos;
         if (target == null) return;
 
+        // حركة كاميرا جديدة قبل انتهاء السابقة تقطعها. مرشّح المسافة
+        // خمسة أمتار فالفاصل بين القراءات عند 50 كم/س ≈ 360ms، وهو
+        // أقصر من مدة الحركة 700ms — فكانت تتراكم وتتقطّع
+        if (_lastCameraTarget != null &&
+            metersBetween(_lastCameraTarget!, target) < 4 &&
+            (_lastCameraBearing - nav.headingDeg).abs() < 3) {
+          return;
+        }
+        _lastCameraTarget = target;
+        _lastCameraBearing = nav.headingDeg;
+
         // الإرساء: السهم في الثلث الأسفل لا في الوسط، فيرى السائق ما
         // أمامه. contentInsets تزيح مركز الكاميرا فعلياً — أنظف من إزاحة
         // الهدف حساباً، لأن الحساب يغلط مع تغيّر الميل والزوم
@@ -337,8 +380,11 @@ class _MapCanvasState extends State<MapCanvas> {
 
 /// تصنيفات الشرائح العلوية — نفس ترتيب التصميم.
 const _categories = <(String, String, IconData)>[
-  ('restaurant', 'مطاعم', Icons.restaurant),
-  ('cafe', 'مقاهي', Icons.local_cafe),
+  // المقاهي مدموجة في «مطاعم»: OSM يصنّف amenity=cafe و Overture
+  // تصنّف cafe تحت المطاعم عندنا (tools/config.py: POI_CATEGORIES).
+  // شريحة «مقاهي» منفصلة كانت تستعلم عن تصنيف لا وجود له في القاعدة
+  // فترجع فارغة دائماً
+  ('restaurant', 'مطاعم ومقاهي', Icons.restaurant),
   ('pharmacy', 'صيدليات', Icons.local_pharmacy),
   ('fuel', 'وقود', Icons.local_gas_station),
   ('hospital', 'مستشفيات', Icons.local_hospital),

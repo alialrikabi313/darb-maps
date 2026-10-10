@@ -11,6 +11,8 @@
 قراءة موقع.
 """
 
+import math
+
 import httpx
 from fastapi import APIRouter, Depends
 from sqlalchemy import bindparam, text
@@ -26,10 +28,37 @@ router = APIRouter(prefix="/route", tags=["توجيه"])
 # ربع السرعة فأربعة أضعاف الزمن
 _TIME_FACTOR = {"free": 1.0, "moderate": 1.4, "heavy": 2.2, "jam": 3.5}
 
-# سقف نقاط المطابقة. المسارات الطويلة (بغداد ← البصرة) تتجاوز آلاف
-# النقاط، وValhalla يرفض فوق حدّه ويتأخّر قبله. نطابق أول هذا العدد —
-# وهو الجزء الذي يسوقه السائق الآن، وسيُعاد الحساب قبل ما يصل آخره
+# سقفا المطابقة: مسافةً وعدداً.
+#
+# المسافة هي القيد الحقيقي — Valhalla يرفض /trace_attributes فوق حدّ
+# مسافة في إعداداته (error_code 154). قِسناه على مسار البصرة ← دهوك:
+# 1200 نقطة = 284 كم وجاء HTTP 400، و600 نقطة = ~140 كم ومرّت.
+# بلا هذا القصّ كانت المسارات بين المحافظات تفقد حدود السرعة وتلوين
+# الزحام كلياً — صفر مناورة لها معرّفات طرق.
+#
+# 110 كم تكفي: السائق يقطعها في ساعة، ويُعاد حساب المسار قبلها بكثير.
+_MAX_TRACE_KM = 110.0
 _MAX_TRACE_POINTS = 1200
+
+
+def _rough_km(a: dict, b: dict) -> float:
+    dlat = (b["lat"] - a["lat"]) * 111.32
+    dlon = (b["lon"] - a["lon"]) * 111.32 * math.cos(math.radians(a["lat"]))
+    return math.hypot(dlat, dlon)
+
+
+def _head_of_route(shape: list[dict]) -> list[dict]:
+    """أول جزء من الخط ضمن سقفَي المسافة والنقاط."""
+    out = [shape[0]]
+    km = 0.0
+
+    for i in range(1, len(shape)):
+        km += _rough_km(shape[i - 1], shape[i])
+        if km > _MAX_TRACE_KM or len(out) >= _MAX_TRACE_POINTS:
+            break
+        out.append(shape[i])
+
+    return out
 
 _TRACE_TIMEOUT = httpx.Timeout(12.0, connect=3.0)
 
@@ -73,7 +102,7 @@ async def _attach_edges(trip: dict) -> float:
     if len(shape) < 2:
         return 0.0
 
-    traced = shape[:_MAX_TRACE_POINTS]
+    traced = _head_of_route(shape)
 
     try:
         matched = await valhalla.trace_attributes(traced,
@@ -115,7 +144,15 @@ async def _attach_edges(trip: dict) -> float:
         if limits:
             m["speed_limit"] = min(limits)
 
-    return len(traced) / len(shape)
+    # النسبة بالمسافة لا بعدد النقاط: خط ڤالهالا يكثّف نقاطه في المدن
+    # ويبعثرها على الطريق السريع، فـ«1200 من 6937 نقطة» كانت تُقرأ 0.17
+    # وهي 110 كم من 1022 — أي 0.11. والفرق يضلّل من يقرأ التغطية
+    traced_km = sum(_rough_km(traced[i - 1], traced[i])
+                    for i in range(1, len(traced)))
+    total_km = sum(_rough_km(shape[i - 1], shape[i])
+                   for i in range(1, len(shape)))
+
+    return round(traced_km / total_km, 3) if total_km > 0 else 0.0
 
 
 def _closure_polygons(conn: Connection) -> list:
@@ -153,9 +190,14 @@ def _annotate_traffic(conn: Connection, trip: dict,
         for m in leg.get("maneuvers", []):
             way_ids.update(m.get("way_ids") or [])
 
+    # نرسل matched_fraction في كل الحالات: التطبيق يحتاج يفرّق بين
+    # «ما طابقنا الطريق» و«طابقناه وما عندنا قراءات سرعة عليه»
     if not way_ids:
-        trip["traffic"] = {"available": False,
-                           "reason": "ما قدرنا نطابق المسار على الطرق"}
+        trip["traffic"] = {
+            "available": False,
+            "reason": "ما قدرنا نطابق المسار على الطرق",
+            "matched_fraction": round(traced_fraction, 2),
+        }
         return trip
 
     stmt = text("""
@@ -170,6 +212,7 @@ def _annotate_traffic(conn: Connection, trip: dict,
             "available": False,
             "reason": "ما عندنا قراءات حديثة على هذا المسار",
             "matched_ways": len(way_ids),
+            "matched_fraction": round(traced_fraction, 2),
         }
         return trip
 
