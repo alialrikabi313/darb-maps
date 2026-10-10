@@ -46,7 +46,15 @@ _CATEGORY_RANK = {
 # الأوسمة التي نحفظها مع النقطة. الباقي يُهمل: القاعدة تُحزَم مع التطبيق
 # وكل وسم زائد يكبّر حجم التحميل بلا أن يُعرض في أي شاشة
 _KEEP_TAGS = ("phone", "opening_hours", "website", "operator", "addr:street",
-              "addr:city", "healthcare", "religion", "brand", "cuisine")
+              "addr:city", "healthcare", "religion", "brand", "cuisine",
+              # wikidata و wikimedia_commons: الطريق الوحيد لصورة مكان في
+              # بياناتنا. OSM العراق ما فيه وسم image ولا صور أصلاً، وهذان
+              # يصلان لصورة كومنز للمعالم المشهورة وحدها — عشرات لا آلاف.
+              # نحفظهما وبطاقة المكان تعرض الصورة إن وُجدت وأيقونة إن غابت
+              "wikidata", "wikimedia_commons", "image",
+              # fee و capacity للمواقف: «موقف مجاني 200 سيارة» معلومة تغيّر
+              # قرار السائق، بخلاف باقي الأوسمة التي نهملها
+              "fee", "capacity")
 
 _SCHEMA = """
 PRAGMA journal_mode = WAL;

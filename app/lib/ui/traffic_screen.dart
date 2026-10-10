@@ -10,14 +10,24 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../core/api_client.dart' show ApiDown, ApiRejected;
 import '../nav/phrases.dart';
+import '../nav/route_model.dart';
 import '../reports/reports.dart';
 import '../state/app_state.dart';
 import 'saved_screen.dart' show SheetScaffold;
 import 'theme.dart';
 
-class TrafficScreen extends StatelessWidget {
+class TrafficScreen extends StatefulWidget {
   const TrafficScreen({super.key});
+
+  @override
+  State<TrafficScreen> createState() => _TrafficScreenState();
+}
+
+class _TrafficScreenState extends State<TrafficScreen> {
+  /// 0 = الآن، 1 = لاحقاً (منحنى ساعات اليوم)
+  int _tab = 0;
 
   @override
   Widget build(BuildContext context) {
@@ -29,12 +39,38 @@ class TrafficScreen extends StatelessWidget {
     final jams = reports.where((r) => r.kind == 'jam').length;
 
     return SheetScaffold(
-      title: 'حالة المرور الآن',
-      subtitle: app.backendUp
-          ? 'مباشر من بلاغات السائقين حولك'
-          : 'بلا اتصال — ما نقدر نجيب الحالة',
+      title: _tab == 0 ? 'حالة المرور الآن' : 'المرور لاحقاً',
+      subtitle: _tab == 1
+          ? 'منحنى ساعات اليوم من قراءات السائقين'
+          : app.backendUp
+              ? 'مباشر من بلاغات السائقين حولك'
+              : 'بلا اتصال — ما نقدر نجيب الحالة',
       icon: Icons.insights_rounded,
       children: [
+        Align(
+          alignment: Alignment.centerRight,
+          child: DSegmented(
+            labels: const ['الآن', 'لاحقاً'],
+            selected: _tab,
+            onPick: (i) => setState(() => _tab = i),
+          ),
+        ),
+        const SizedBox(height: 14),
+
+        if (_tab == 1) ...[
+          const _HourProfile(),
+          const SizedBox(height: 22),
+          const _FastestRoutes(),
+        ] else ...[
+          ..._nowTab(app, reports, crashes, closures, jams),
+        ],
+      ],
+    );
+  }
+
+  List<Widget> _nowTab(AppState app, List<Report> reports, int crashes,
+      int closures, int jams) {
+    return [
         Row(
           children: [
             Expanded(
@@ -70,6 +106,9 @@ class TrafficScreen extends StatelessWidget {
         _CoverageCard(app: app),
 
         const SizedBox(height: 22),
+        const _FastestRoutes(),
+
+        const SizedBox(height: 22),
         const DSectionHeader(
           title: 'الحركة حولك',
           subtitle: 'أحدث ما بلّغ به السائقون',
@@ -84,8 +123,7 @@ class TrafficScreen extends StatelessWidget {
             _MovementRow(report: r),
             const SizedBox(height: 8),
           ],
-      ],
-    );
+    ];
   }
 
   static List<Report> _nearest(List<Report> list) {
@@ -93,6 +131,285 @@ class TrafficScreen extends StatelessWidget {
         (a, b) => (a.distanceM ?? 1e9).compareTo(b.distanceM ?? 1e9));
     return out.take(6).toList();
   }
+}
+
+/// منحنى الزحام بساعات اليوم.
+///
+/// وطنيّ لا محلّي، ونقولها في السطر تحته: القراءة عندنا ما تحمل موقعاً
+/// (way_id وحده) وهذا وعد خصوصية. منحنى باسم «بغداد» كان يقتضي أن نعرف
+/// أين السائق، وما نعرف ولا نبي.
+class _HourProfile extends StatefulWidget {
+  const _HourProfile();
+
+  @override
+  State<_HourProfile> createState() => _HourProfileState();
+}
+
+class _HourProfileState extends State<_HourProfile> {
+  List<double?>? _hours;
+  int _days = 7;
+  bool _failed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final p = await context.read<AppState>().api.trafficProfile();
+      if (!mounted) return;
+      setState(() {
+        _hours = p.hours;
+        _days = p.windowDays;
+      });
+    } on ApiDown {
+      if (mounted) setState(() => _failed = true);
+    } on ApiRejected {
+      if (mounted) setState(() => _failed = true);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final hours = _hours;
+    final known = hours?.where((h) => h != null).length ?? 0;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const DSectionHeader(
+          title: 'أفضل أوقات الانطلاق اليوم',
+          subtitle: 'لتجنّب الزحام',
+          icon: Icons.schedule,
+        ),
+        const SizedBox(height: 10),
+        DCard(
+          color: D.cardInner,
+          shadow: const [],
+          radius: D.rInner,
+          padding: const EdgeInsets.fromLTRB(12, 14, 12, 10),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (hours == null)
+                SizedBox(
+                  height: 92,
+                  child: Center(
+                    child: Text(
+                      _failed
+                          ? 'المنحنى يحتاج اتصالاً بالسيرفر.'
+                          : 'نجيب القراءات…',
+                      style: D.bodySoft,
+                    ),
+                  ),
+                )
+              else ...[
+                DHourBars(hours: hours, highlightHour: DateTime.now().hour),
+                const SizedBox(height: 6),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    for (final h in [0, 6, 12, 18])
+                      Text(_hourLabel(h), style: D.caption),
+                  ].reversed.toList(),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  known == 0
+                      ? 'ما عندنا قراءات كافية بعد. المنحنى يمتلئ كلما سافر '
+                          'سائقون أكثر — والقراءة تُحذف بعد $_days أيام.'
+                      : 'من قراءات سرعة سائقي درب في العراق كلّه خلال '
+                          '$_days أيام. ${hd('$known')} ساعة من ٢٤ عندها '
+                          'قراءات كافية؛ الباقي باهت لأننا ما نعرفه.',
+                  textAlign: TextAlign.right,
+                  style: D.caption,
+                ),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  static String _hourLabel(int h) {
+    final period = h < 12 ? 'ص' : 'م';
+    final hh = h % 12 == 0 ? 12 : h % 12;
+    return hd('$hh $period');
+  }
+}
+
+/// «الطرق الأسرع»: وجهات المستخدم المتكرّرة بزمنها الآن.
+///
+/// من رحلاته لا من قائمة ثابتة: «من المنصور إلى الكرادة» لا تعني شيئاً
+/// لساكن البصرة. وبلا رحلات محفوظة نقول ذلك بدل ما نخترع مسارين.
+class _FastestRoutes extends StatefulWidget {
+  const _FastestRoutes();
+
+  @override
+  State<_FastestRoutes> createState() => _FastestRoutesState();
+}
+
+class _FastestRoutesState extends State<_FastestRoutes> {
+  /// العنوان ← (الزمن بالثواني، الشارع الأطول على المسار)
+  final Map<String, (double, String?)> _eta = {};
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _load());
+  }
+
+  Future<void> _load() async {
+    if (_busy) return;
+    final app = context.read<AppState>();
+    final from = app.fix?.pos;
+    if (from == null) return;
+
+    // ثلاثة فقط: كل واحدة طلب توجيه كامل، وقائمة من عشر وجهات تعني
+    // عشرة طلبات في كل مرة يفتح فيها التبويب
+    final trips = app.recentTrips.take(3).toList();
+    if (trips.isEmpty) return;
+
+    setState(() => _busy = true);
+    for (final t in trips) {
+      try {
+        final j = await app.api
+            .route(points: [from, t.pos], alternates: 0);
+        final route = NavRoute.fromTrip(j['trip'] as Map<String, dynamic>);
+        if (!mounted) return;
+        _eta[t.title] = (route.effectiveTimeS, _mainStreet(route));
+      } on ApiDown {
+        break;
+      } on ApiRejected {
+        continue;
+      }
+    }
+    if (mounted) setState(() => _busy = false);
+  }
+
+  /// اسم أطول مناورة لها اسم — هو ما يقوله السائق حين يصف طريقه.
+  static String? _mainStreet(NavRoute r) {
+    Maneuver? longest;
+    for (final m in r.maneuvers) {
+      if (m.announceStreet == null) continue;
+      if (longest == null || m.lengthM > longest.lengthM) longest = m;
+    }
+    return longest?.announceStreet;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final app = context.watch<AppState>();
+    final trips = app.recentTrips.take(3).toList();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const DSectionHeader(
+          title: 'الطرق الأسرع',
+          subtitle: 'وجهاتك المتكرّرة بزمنها الآن',
+          icon: Icons.route_outlined,
+        ),
+        const SizedBox(height: 10),
+        if (trips.isEmpty)
+          DCard(
+            color: D.cardInner,
+            shadow: const [],
+            radius: D.rInner,
+            padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+            child: Text(
+              'تظهر هنا بعد أول رحلة. كل وجهة تروحها تُحفَظ، وتصير زمنها '
+              'الآن معروضاً قبل ما تنطلق.',
+              textAlign: TextAlign.center,
+              style: D.bodySoft,
+            ),
+          )
+        else
+          for (final t in trips) ...[
+            _FastRouteRow(
+              title: t.title,
+              seconds: _eta[t.title]?.$1,
+              via: _eta[t.title]?.$2,
+              busy: _busy && !_eta.containsKey(t.title),
+              onTap: () => app.chooseDestination(Destination(t.title, t.pos)),
+            ),
+            const SizedBox(height: 8),
+          ],
+      ],
+    );
+  }
+}
+
+class _FastRouteRow extends StatelessWidget {
+  final String title;
+  final double? seconds;
+  final String? via;
+  final bool busy;
+  final VoidCallback onTap;
+
+  const _FastRouteRow({
+    required this.title,
+    required this.seconds,
+    required this.via,
+    required this.busy,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) => DCard(
+        color: D.cardInner,
+        shadow: const [],
+        radius: D.rInner,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+        onTap: onTap,
+        child: Row(
+          children: [
+            DCard(
+              radius: D.rPill,
+              color: D.mintLight,
+              shadow: const [],
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              child: Text(
+                busy
+                    ? '…'
+                    : seconds == null
+                        ? '—'
+                        : durationLabel(seconds!),
+                style: D.caption.copyWith(
+                    fontWeight: FontWeight.w800, color: D.greenDeep),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text('إلى $title',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: D.h3.copyWith(fontSize: 14)),
+                  Text(
+                    via != null
+                        ? 'عبر $via'
+                        : seconds == null
+                            ? 'ما حسبناه بعد'
+                            : 'الطريق المقترح',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: D.caption,
+                  ),
+                ],
+              ),
+            ),
+            const Icon(Icons.chevron_left, size: 18, color: D.textSoft),
+          ],
+        ),
+      );
 }
 
 /// بطاقة تغطية الزحام — الرقم الوحيد الذي يستحق شرحاً.

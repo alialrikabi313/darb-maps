@@ -12,6 +12,7 @@ import 'package:maplibre_gl/maplibre_gl.dart';
 import 'package:provider/provider.dart';
 
 import '../config.dart';
+import '../core/favorites.dart';
 import '../core/packs.dart';
 import '../core/geo.dart';
 import '../core/search.dart';
@@ -70,6 +71,26 @@ class _MapCanvasState extends State<MapCanvas> {
     WidgetsBinding.instance.addPostFrameCallback((_) => _sync(app));
     final navigating = app.navState.isActive;
 
+    // لمس الخريطة بالسحب يفكّ المتابعة.
+    //
+    // onCameraTrackingDismissed ما يُستدعى أبداً عندنا: MapLibre يطلقه
+    // حين يفكّ المستخدمُ تتبّعَه هو، ونحن myLocationTrackingMode = none
+    // لأننا نحرّك الكاميرا بأنفسنا. فكان السائق يسحب الخريطة ليشوف ما
+    // قدّامه فترجع الكاميرا فوراً لموقعه — يصارعها ولا يفوز.
+    //
+    // onPointerMove لا onPointerDown: اللمسة الواحدة تختار معلماً ولا
+    // تعني «دعني أتجوّل»، والسحب وحده يعنيها
+    return Listener(
+      onPointerMove: (e) {
+        if (app.cameraMode == CameraMode.free) return;
+        if (e.delta.distance < 1.5) return;
+        app.setCameraMode(CameraMode.free);
+      },
+      child: _buildMap(app, navigating),
+    );
+  }
+
+  Widget _buildMap(AppState app, bool navigating) {
     return MapLibreMap(
       styleString: app.tileServer.styleUrl,
       initialCameraPosition: CameraPosition(
@@ -90,7 +111,6 @@ class _MapCanvasState extends State<MapCanvas> {
       attributionButtonMargins: const math.Point(12, 150),
       tiltGesturesEnabled: !navigating,
       rotateGesturesEnabled: !navigating,
-      onCameraTrackingDismissed: () => app.setCameraMode(CameraMode.free),
       onMapClick: (_, latLng) => _onMapTap(app, latLng),
     );
   }
@@ -387,6 +407,7 @@ const _categories = <(String, String, IconData)>[
   ('restaurant', 'مطاعم ومقاهي', Icons.restaurant),
   ('pharmacy', 'صيدليات', Icons.local_pharmacy),
   ('fuel', 'وقود', Icons.local_gas_station),
+  ('parking', 'مواقف', Icons.local_parking),
   ('hospital', 'مستشفيات', Icons.local_hospital),
   ('mosque', 'جوامع', Icons.mosque),
   ('market', 'أسواق', Icons.shopping_bag),
@@ -429,6 +450,9 @@ class MapOverlay extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 10),
+              // البطاقتان قبل الشرائح وتختفيان عند اختيار وجهة: الشاشة
+              // أثناء التخطيط للمسار ما تحتاج اختصاراً لوجهة ثانية
+              if (app.destination == null) const _HomeWorkRow(),
               const _CategoryStrip(),
             ],
           ),
@@ -474,6 +498,15 @@ class MapOverlay extends StatelessWidget {
             child: _SpeedPill(kmh: app.fix!.speedKmh),
           ),
 
+        // وسيلة إيضاح ألوان الزحام تطفو فوق ورقة المسار — التلوين بلا
+        // مفتاح يخلّي السائق يحزر معنى البرتقالي
+        if (app.destination != null && app.proposed != null)
+          Positioned(
+            left: 14,
+            bottom: _rightStackBottom(app) + 58,
+            child: const DTrafficLegend(),
+          ),
+
         // بطاقة المكان المعاين، أو ورقة المسار إن اختار وجهة
         if (app.destination != null)
           Positioned(
@@ -515,6 +548,100 @@ class MapOverlay extends StatelessWidget {
       context: context,
       backgroundColor: Colors.transparent,
       builder: (_) => const _LayersSheet(),
+    );
+  }
+}
+
+/// بطاقتا «المنزل» و«العمل» فوق الخريطة.
+///
+/// غير المحفوظة تبقى معروضة بنصّ «أضفه» بدل ما تختفي: الاختصار الذي
+/// يظهر بعد الحفظ فقط لا يعرف المستخدم أنه موجود فلا يحفظ أبداً.
+class _HomeWorkRow extends StatelessWidget {
+  const _HomeWorkRow();
+
+  @override
+  Widget build(BuildContext context) {
+    final app = context.watch<AppState>();
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        children: [
+          Expanded(
+            child: _FavChip(
+              kind: FavoriteKind.home,
+              label: 'المنزل',
+              icon: Icons.home_outlined,
+              fav: app.favoriteFor(FavoriteKind.home),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: _FavChip(
+              kind: FavoriteKind.work,
+              label: 'العمل',
+              icon: Icons.work_outline,
+              fav: app.favoriteFor(FavoriteKind.work),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FavChip extends StatelessWidget {
+  final FavoriteKind kind;
+  final String label;
+  final IconData icon;
+  final Favorite? fav;
+
+  const _FavChip({
+    required this.kind,
+    required this.label,
+    required this.icon,
+    required this.fav,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final app = context.read<AppState>();
+
+    return DCard(
+      radius: D.rPill,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      shadow: D.shadowSoft,
+      onTap: () async {
+        final f = fav;
+        if (f != null) {
+          await app.chooseDestination(Destination(f.title, f.pos));
+          return;
+        }
+        final chosen = await Navigator.of(context).push<Destination>(
+            MaterialPageRoute(builder: (_) => const SearchScreen()));
+        if (chosen != null) {
+          await app.setFavorite(kind, chosen.title, chosen.pos);
+        }
+      },
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(label,
+                    style: D.body.copyWith(fontWeight: FontWeight.w700)),
+                Text(fav?.title ?? 'أضفه',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: D.caption),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          DIconCircle(icon, size: 32, foreground: D.greenDeep),
+        ],
+      ),
     );
   }
 }
@@ -592,20 +719,20 @@ class _NoticeBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return DCard(
-      color: const Color(0xFFFFF6E2),
+      color: D.noticeBg,
       padding: const EdgeInsets.fromLTRB(6, 6, 12, 6),
       child: Row(
         children: [
           IconButton(
             icon: const Icon(Icons.close, size: 17),
-            color: const Color(0xFF8A6418),
+            color: D.noticeIcon,
             onPressed: onDismiss,
             visualDensity: VisualDensity.compact,
           ),
           Expanded(
             child: Text(text,
                 style: const TextStyle(
-                    fontSize: 12.5, color: Color(0xFF7A5A14), height: 1.35)),
+                    fontSize: 12.5, color: D.noticeInk, height: 1.35)),
           ),
         ],
       ),
@@ -652,45 +779,7 @@ class _LayersSheet extends StatelessWidget {
             contentPadding: EdgeInsets.zero,
           ),
           const SizedBox(height: 8),
-          const _TrafficLegend(),
-        ],
-      ),
-    );
-  }
-}
-
-class _TrafficLegend extends StatelessWidget {
-  const _TrafficLegend();
-
-  @override
-  Widget build(BuildContext context) {
-    const items = [
-      (D.trafficFree, 'سهل'),
-      (D.trafficMid, 'متوسط'),
-      (D.trafficJam, 'ازدحام شديد'),
-    ];
-
-    return DCard(
-      color: D.cardInner,
-      shadow: const [],
-      radius: D.rPill,
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-        children: [
-          for (final it in items)
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 10, height: 10,
-                  decoration:
-                      BoxDecoration(color: it.$1, shape: BoxShape.circle),
-                ),
-                const SizedBox(width: 6),
-                Text(it.$2, style: D.bodySoft),
-              ],
-            ),
+          const Center(child: DTrafficLegend()),
         ],
       ),
     );
@@ -776,7 +865,7 @@ class FatalScreen extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 const DIconCircle(Icons.error_outline,
-                    size: 56, background: Color(0xFFFDE7E7),
+                    size: 56, background: D.errorTint,
                     foreground: D.danger),
                 const SizedBox(height: 16),
                 const Text('ما قدرنا نشغّل التطبيق', style: D.h2),

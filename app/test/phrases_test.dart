@@ -6,6 +6,7 @@
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:darb/config.dart';
 import 'package:darb/nav/phrases.dart';
 import 'package:darb/nav/route_model.dart';
 
@@ -58,12 +59,29 @@ void main() {
     });
   });
 
+  // المعروض يمرّ بـhd فيتبع Cfg.hindiDigits. نلفّ التوقّع بنفس الدالة
+  // لا نكتب «١٦» حرفياً: الاختبار يحمي الصياغة لا قرار شكل الرقم، وتثبيت
+  // الهندية هنا يجعل تبديل الإعداد يكسر عشرة اختبارات بلا خلل حقيقي
   group('durationLabel', () {
     test('تحت دقيقة', () => expect(durationLabel(30), 'أقل من دقيقة'));
-    test('دقائق', () => expect(durationLabel(960), '16 دقيقة'));
+    test('دقائق', () => expect(durationLabel(960), hd('16 دقيقة')));
     test('ساعة مفردة بلا رقم', () => expect(durationLabel(3600), 'ساعة'));
-    test('ساعة ودقائق', () => expect(durationLabel(4500), 'ساعة و15 دقيقة'));
-    test('ساعات', () => expect(durationLabel(7200), '2 ساعات'));
+    test('ساعة ودقائق',
+        () => expect(durationLabel(4500), hd('ساعة و15 دقيقة')));
+    test('ساعات', () => expect(durationLabel(7200), hd('2 ساعات')));
+  });
+
+  group('hd — الأرقام الهندية', () {
+    test('يحوّل الأرقام ويترك الحروف', () {
+      // الحالة من شريط الملاحة: «450 م» ظهرت عربية والمرئي هندي
+      expect(hd('450 م'), Cfg.hindiDigits ? '٤٥٠ م' : '450 م');
+    });
+
+    test('ما يلمس المنطوق', () {
+      // distanceText تذهب للنطق لا للعرض: محرّكات TTS تقرأ العربية
+      // مضمونةً، والهندية تختلف بين محرّك وآخر
+      expect(distanceText(500), '500 متر');
+    });
   });
 
   group('maneuverTitle — أنواع ظهرت فعلاً في مسارات بغداد', () {
@@ -129,7 +147,7 @@ void main() {
     });
 
     test('بلا اسم شارع نرجّع الفعل وحده لا «إلى null»', () {
-      // الحالة الغالبة في العراق: 8% فقط من الطرق مسمّاة في OSM
+      // الحالة الغالبة في العراق: 9% فقط من الطرق مسمّاة في OSM
       expect(maneuverDetail(mk(10)), 'انعطف يمين');
     });
   });
@@ -178,24 +196,24 @@ void main() {
 
   group('arrivalLabel — 12 ساعة عربية', () {
     test('الصباح', () {
-      expect(arrivalLabel(DateTime(2026, 10, 8, 9, 5)), '9:05 ص');
+      expect(arrivalLabel(DateTime(2026, 10, 8, 9, 5)), hd('9:05 ص'));
     });
     test('بعد الظهر', () {
-      expect(arrivalLabel(DateTime(2026, 10, 8, 14, 30)), '2:30 م');
+      expect(arrivalLabel(DateTime(2026, 10, 8, 14, 30)), hd('2:30 م'));
     });
     test('منتصف الليل يصير 12 لا 0', () {
-      expect(arrivalLabel(DateTime(2026, 10, 8, 0, 15)), '12:15 ص');
+      expect(arrivalLabel(DateTime(2026, 10, 8, 0, 15)), hd('12:15 ص'));
     });
     test('الظهر يصير 12 م لا 0 م', () {
-      expect(arrivalLabel(DateTime(2026, 10, 8, 12, 0)), '12:00 م');
+      expect(arrivalLabel(DateTime(2026, 10, 8, 12, 0)), hd('12:00 م'));
     });
   });
 }
 
 // ── التعليمة بالمعلم ───────────────────────────────────────────────────────
 //
-// 9% فقط من طرق العراق مسمّاة. قِسنا على خمسة مسارات في خمس مدن:
-// التعليمات التي فيها اسم شارع 46%، وبإضافة المعالم 83%. فهذا المنطق
+// 9% فقط من طرق العراق مسمّاة. قِسنا على ثماني مسارات في سبع مدن:
+// التعليمات التي فيها اسم شارع 55%، وبإضافة المعالم 82%. فهذا المنطق
 // يحمل نصف ما يُنطق للسائق.
 
 void landmarkTests() {

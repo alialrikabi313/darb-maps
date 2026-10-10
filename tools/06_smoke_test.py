@@ -17,6 +17,7 @@
     python 06_smoke_test.py
 """
 
+import os
 import sys
 import time
 import json
@@ -30,6 +31,10 @@ from config import (
     TILE_MAX_ZOOM, REPORT_TYPES, TRACE_TRIM_ENDPOINTS_M, REPO_DIR,
     ROAD_CANDIDATE_PROMOTE_HITS,
 )
+
+# رأس الصيانة. السيرفر في التطوير يقبل هذي القيمة؛ في الإنتاج يُضبط
+# DARB_ADMIN_TOKEN ويُمرَّر هنا بنفس المتغيّر
+_ADMIN = {"X-Darb-Admin": os.getenv("DARB_ADMIN_TOKEN", "dev-admin-darb")}
 
 # نقاط بغدادية حقيقية نستخدمها في كل الفحوص
 _TAHRIR = (33.3074, 44.4009)
@@ -550,7 +555,8 @@ def check_traffic() -> None:
         requests.post(f"{API_URL}/traffic/trace", json={"points": slow},
                       timeout=30)
 
-    agg = requests.post(f"{API_URL}/traffic/aggregate", timeout=20).json()
+    agg = requests.post(f"{API_URL}/traffic/aggregate",
+                        headers=_ADMIN, timeout=20).json()
     ok("تجميع الزحام",
        f"حدّثنا {agg['updated']} قطعة، نسينا {agg['forgotten']}")
 
@@ -588,6 +594,141 @@ def check_traffic() -> None:
 
     check_road_candidates(pts, now)
     check_long_route()
+    check_multi_stop()
+    check_route_prefs()
+    check_traffic_profile()
+    check_guards()
+
+
+def check_multi_stop() -> None:
+    """رحلة بمحطتين — كل مرحلة لازم تُطابَق وحدها.
+
+    انكسرت فعلاً أول ما أضفنا المحطات: _attach_edges كانت تقرأ legs[0]
+    وحدها، وفهارس شكل المناورة نسبية لمرحلتها — فمناورات المرحلة الثانية
+    تطلع بلا معرّفات طرق ولا حدود سرعة، والملوَّن منها يحمل لون مرحلة
+    غيرها.
+    """
+    r = requests.post(f"{API_URL}/route", json={
+        "locations": [{"lat": 33.3152, "lon": 44.3661},   # بغداد المركز
+                      {"lat": 33.2778, "lon": 44.3900},   # الجادرية
+                      {"lat": 33.3100, "lon": 44.3200}],  # المنصور
+        "alternates": 0}, timeout=90)
+
+    if r.status_code != 200:
+        die("رحلة بمحطّة", f"HTTP {r.status_code} — {r.text[:150]}")
+
+    trip = r.json()["trip"]
+    legs = trip.get("legs", [])
+    if len(legs) != 2:
+        die("تقسيم المراحل", f"ثلاث نقاط أعطت {len(legs)} مرحلة لا مرحلتين")
+
+    for i, leg in enumerate(legs):
+        if not leg.get("summary", {}).get("length"):
+            die("ملخّص المرحلة", f"المرحلة {i + 1} بلا طول — "
+                                 f"شاشة التخطيط تعرض زمن كل محطة منه")
+
+    matched = [i for i, leg in enumerate(legs)
+               if any(m.get("way_ids") for m in leg.get("maneuvers", []))]
+    if len(matched) < 2:
+        die("مطابقة كل مرحلة",
+            f"طابقنا المراحل {matched} من مرحلتين — المرحلة الثانية بلا "
+            f"معرّفات طرق. افحص _attach_edges")
+
+    ok("رحلة متعدّدة المحطات",
+       f"مرحلتان، {sum(len(l['maneuvers']) for l in legs)} مناورة، "
+       f"{trip['summary']['length']:.1f} كم")
+
+
+def check_route_prefs() -> None:
+    """تجنّب الطريق السريع لازم يغيّر المسار فعلاً.
+
+    «تجنّب» عند ڤالهالا رغبة (use_highways=0) لا منع، فالخيار قد يمرّ
+    بلا أثر إن ما وصل costing_options. نقيس الفرق بدل ما نثق بالقبول:
+    HTTP 200 على خيار مُهمَل يبدو نجاحاً وهو عطل صامت.
+    """
+    base_body = {"locations": [{"lat": 33.3152, "lon": 44.3661},
+                               {"lat": 33.2200, "lon": 44.2340}],
+                 "alternates": 0}
+
+    plain = requests.post(f"{API_URL}/route", json=base_body, timeout=60)
+    avoid = requests.post(f"{API_URL}/route",
+                          json={**base_body, "avoid_highways": True},
+                          timeout=60)
+
+    if plain.status_code != 200 or avoid.status_code != 200:
+        die("تفضيلات المسار",
+            f"HTTP {plain.status_code}/{avoid.status_code}")
+
+    a = plain.json()["trip"]["summary"]
+    b = avoid.json()["trip"]["summary"]
+
+    # نمط غير مدعوم يُرفَض برسالة واضحة لا بـ500 من ڤالهالا
+    bad = requests.post(f"{API_URL}/route",
+                        json={**base_body, "costing": "hovercraft"},
+                        timeout=30)
+    if bad.status_code != 422:
+        die("رفض نمط مجهول",
+            f"costing=hovercraft أعطى HTTP {bad.status_code} لا 422")
+
+    ok("تفضيلات المسار",
+       f"بالسريع {a['length']:.1f} كم/{a['time'] / 60:.0f} د، "
+       f"بتجنّبه {b['length']:.1f} كم/{b['time'] / 60:.0f} د")
+
+
+def check_guards() -> None:
+    """مسارات الصيانة محميّة، والحدّ على الطلبات يشتغل.
+
+    كانتا مكشوفتين للعالم: من ينادي /maintenance/cleanup بالتكرار يمسح
+    البلاغات الحيّة. والفحص هنا سلبي بقصد — ننادي بلا توكن ونتوقّع 401،
+    لأن «رجع 200 بالتوكن» ما ينفي أنه يرجع 200 بلاه أيضاً.
+    """
+    for path in ("/maintenance/cleanup", "/traffic/aggregate"):
+        r = requests.post(f"{API_URL}{path}", timeout=20)
+        if r.status_code != 401:
+            die("حماية مسارات الصيانة",
+                f"{path} بلا توكن أعطى HTTP {r.status_code} لا 401")
+
+    bad = requests.post(f"{API_URL}/maintenance/cleanup",
+                        headers={"X-Darb-Admin": "wrong"}, timeout=20)
+    if bad.status_code != 401:
+        die("حماية مسارات الصيانة",
+            f"توكن خاطئ أعطى HTTP {bad.status_code} لا 401")
+
+    ok("حماية مسارات الصيانة", "cleanup و aggregate يرفضان بلا توكن")
+
+    # /health مستثنى من الحدّ: مراقِب يسأله كل ثانية سلوك سليم
+    for _ in range(30):
+        if requests.get(f"{API_URL}/health", timeout=5).status_code != 200:
+            die("استثناء /health من الحدّ", "حُظر بعد طلبات متتالية")
+
+    ok("استثناء /health من حدّ الطلبات", "30 طلباً متتالياً بلا حظر")
+
+
+def check_traffic_profile() -> None:
+    """منحنى ساعات اليوم. الفراغ نتيجة صحيحة — الكذب لا.
+
+    الساعة بلا قراءات كافية لازم ترجع null لا صفراً: صفر يعني «سالك»
+    ويرسمه التطبيق عموداً أخضر، فيطلع السائق خامسة الصبح على وعد ما
+    قِسناه.
+    """
+    r = requests.get(f"{API_URL}/traffic/profile", timeout=30)
+    if r.status_code != 200:
+        die("منحنى الساعات", f"HTTP {r.status_code} — {r.text[:150]}")
+
+    j = r.json()
+    hours = j.get("hours")
+    if not isinstance(hours, list) or len(hours) != 24:
+        die("منحنى الساعات", f"رجّع {len(hours or [])} ساعة لا ٢٤")
+
+    for h, v in enumerate(hours):
+        if v is None:
+            continue
+        if not 0.0 <= v <= 1.0:
+            die("مدى قيم المنحنى", f"الساعة {h} = {v} خارج [0,1]")
+
+    known = sum(1 for v in hours if v is not None)
+    ok("منحنى ساعات اليوم",
+       f"{known}/24 ساعة عندها قراءات كافية (نافذة {j['window_days']} أيام)")
 
 
 def check_long_route() -> None:

@@ -44,6 +44,29 @@ if not JWT_SECRET:
 
 IS_PROD = not IS_DEV
 
+# توكن الصيانة. يحمي /maintenance/cleanup و/traffic/aggregate — كانتا
+# مكشوفتين للعالم: من ينادي cleanup بالتكرار يمسح البلاغات الحيّة، ومن
+# ينادي aggregate يحرق القاعدة بتجميع كامل في كل مرة.
+#
+# نفس منطق السرّ أعلاه: فشلٌ مغلق، والتطوير وحده له قيمة افتراضية
+ADMIN_TOKEN = os.getenv("DARB_ADMIN_TOKEN",
+                        "dev-admin-darb" if IS_DEV else "")
+
+if not ADMIN_TOKEN:
+    sys.exit(
+        "DARB_ADMIN_TOKEN مطلوب.\n"
+        "  للإنتاج:  اضبط DARB_ADMIN_TOKEN بسرّ عشوائي طويل\n"
+        "  للتطوير:  اضبط DARB_DEV=1"
+    )
+
+# حدّ الطلبات لكل عنوان في الدقيقة.
+#
+# قرارك: 120 تكفي سائقاً يلاحظ البلاغات كل خمس ثوانٍ ويحسب مسارات، وما
+# تكفي سكربتاً يغرق القاعدة. الحدّ في الذاكرة لا في Redis — نسخة واحدة
+# من السيرفر هي وضعنا الآن، وإذا تعدّدت النسخ يصير الحدّ لكل نسخة
+# (أي أرخى مما يبدو) وعندها ننقله لمخزن مشترك
+RATE_LIMIT_PER_MIN = int(os.getenv("DARB_RATE_LIMIT", "120"))
+
 JWT_ALG = "HS256"
 # التوكن طويل العمر: الجهاز ما عنده كلمة مرور يجدّد بها، وانتهاؤه يعني
 # فقدان سمعة الجهاز وتاريخ بلاغاته
@@ -65,5 +88,5 @@ __all__ = [
     "ROAD_CANDIDATE_MIN_LENGTH_M", "ROAD_CANDIDATE_MIN_OFFSET_M",
     "ROAD_CANDIDATE_MERGE_RADIUS_M", "ROAD_CANDIDATE_PROMOTE_HITS",
     "API_PORT", "IS_PROD", "JWT_SECRET", "JWT_ALG", "JWT_TTL_DAYS", "DB_DSN",
-    "CORS_ORIGINS",
+    "CORS_ORIGINS", "ADMIN_TOKEN", "RATE_LIMIT_PER_MIN",
 ]

@@ -47,14 +47,15 @@ def _rough_km(a: dict, b: dict) -> float:
     return math.hypot(dlat, dlon)
 
 
-def _head_of_route(shape: list[dict]) -> list[dict]:
+def _head_of_route(shape: list[dict], max_km: float = _MAX_TRACE_KM
+                   ) -> list[dict]:
     """أول جزء من الخط ضمن سقفَي المسافة والنقاط."""
     out = [shape[0]]
     km = 0.0
 
     for i in range(1, len(shape)):
         km += _rough_km(shape[i - 1], shape[i])
-        if km > _MAX_TRACE_KM or len(out) >= _MAX_TRACE_POINTS:
+        if km > max_km or len(out) >= _MAX_TRACE_POINTS:
             break
         out.append(shape[i])
 
@@ -88,70 +89,89 @@ def _decode_polyline6(encoded: str) -> list[dict]:
     return points
 
 
-async def _attach_edges(trip: dict) -> float:
-    """يعلّق way_id و speed_limit على كل مناورة.
+def _path_km(shape: list[dict]) -> float:
+    return sum(_rough_km(shape[i - 1], shape[i])
+               for i in range(1, len(shape)))
 
-    يرجّع نسبة نقاط الشكل التي طابقناها (0–1). الفشل ليس قاتلاً: المسار
+
+async def _attach_edges(trip: dict, costing: str = "auto") -> float:
+    """يعلّق way_id و speed_limit على كل مناورة في كل مرحلة.
+
+    يرجّع نسبة طول المسار الذي طابقناه (0–1). الفشل ليس قاتلاً: المسار
     صالح بلا معرّفات، فنرجّع صفراً ويُعلن التطبيق غياب الزحام بصراحة.
+
+    كل مرحلة تُطابَق وحدها: فهارس شكل المناورة نسبية لشكل مرحلتها، فخلط
+    المراحل في طلب واحد كان يعلّق معرّفات المرحلة الأولى على مناورات
+    الثانية. وهذا ما ظهر أول ما صارت الرحلة متعدّدة المحطات.
     """
     legs = trip.get("legs") or []
     if not legs:
         return 0.0
 
-    shape = _decode_polyline6(legs[0].get("shape", ""))
-    if len(shape) < 2:
-        return 0.0
+    traced_km = 0.0
+    total_km = 0.0
+    # ميزانية مشتركة: السقف قيد ڤالهالا على الطلب الواحد، وعشر مراحل
+    # بسقف كامل لكل واحدة تعني عشرة طلبات ثقيلة لمسار واحد
+    budget_km = _MAX_TRACE_KM
 
-    traced = _head_of_route(shape)
+    for leg in legs:
+        shape = _decode_polyline6(leg.get("shape", ""))
+        if len(shape) < 2:
+            continue
 
-    try:
-        matched = await valhalla.trace_attributes(traced,
-                                                  timeout=_TRACE_TIMEOUT)
-    except Exception:
-        # المطابقة تحسين لا شرط. فشلها (مهلة، رفض، مسار على طريق لا
-        # تغطّيه قواعد المطابقة) ما يمنع تسليم المسار نفسه
-        return 0.0
+        total_km += _path_km(shape)
+        if budget_km <= 0:
+            continue
 
-    edges = matched.get("edges") or []
-    if not edges:
-        return 0.0
+        traced = _head_of_route(shape, budget_km)
 
-    # نربط الحواف بالمناورات بتقاطع فهارس الشكل: المناورة تمتد من
-    # begin_shape_index إلى end_shape_index، والحافة كذلك
-    for m in legs[0].get("maneuvers", []):
-        m0 = m.get("begin_shape_index", 0)
-        m1 = m.get("end_shape_index", m0)
+        try:
+            matched = await valhalla.trace_attributes(
+                traced, costing=costing, timeout=_TRACE_TIMEOUT)
+        except Exception:
+            # المطابقة تحسين لا شرط. فشلها (مهلة، رفض، مسار على طريق لا
+            # تغطّيه قواعد المطابقة) ما يمنع تسليم المسار نفسه
+            continue
 
-        way_ids: list[int] = []
-        limits: list[float] = []
+        edges = matched.get("edges") or []
+        if not edges:
+            continue
 
-        for e in edges:
-            e0 = e.get("begin_shape_index")
-            e1 = e.get("end_shape_index")
-            if e0 is None or e1 is None or e1 < m0 or e0 > m1:
-                continue
-            wid = e.get("way_id")
-            if wid is not None and wid not in way_ids:
-                way_ids.append(wid)
-            lim = e.get("speed_limit")
-            if lim:
-                limits.append(float(lim))
+        leg_km = _path_km(traced)
+        traced_km += leg_km
+        budget_km -= leg_km
 
-        if way_ids:
-            m["way_ids"] = way_ids
-        # حدّ السرعة الأدنى على المناورة: المناورة قد تمرّ على حافتين
-        # بحدّين، والأدنى هو الملزِم
-        if limits:
-            m["speed_limit"] = min(limits)
+        # نربط الحواف بالمناورات بتقاطع فهارس الشكل: المناورة تمتد من
+        # begin_shape_index إلى end_shape_index، والحافة كذلك
+        for m in leg.get("maneuvers", []):
+            m0 = m.get("begin_shape_index", 0)
+            m1 = m.get("end_shape_index", m0)
+
+            way_ids: list[int] = []
+            limits: list[float] = []
+
+            for e in edges:
+                e0 = e.get("begin_shape_index")
+                e1 = e.get("end_shape_index")
+                if e0 is None or e1 is None or e1 < m0 or e0 > m1:
+                    continue
+                wid = e.get("way_id")
+                if wid is not None and wid not in way_ids:
+                    way_ids.append(wid)
+                lim = e.get("speed_limit")
+                if lim:
+                    limits.append(float(lim))
+
+            if way_ids:
+                m["way_ids"] = way_ids
+            # حدّ السرعة الأدنى على المناورة: المناورة قد تمرّ على حافتين
+            # بحدّين، والأدنى هو الملزِم
+            if limits:
+                m["speed_limit"] = min(limits)
 
     # النسبة بالمسافة لا بعدد النقاط: خط ڤالهالا يكثّف نقاطه في المدن
     # ويبعثرها على الطريق السريع، فـ«1200 من 6937 نقطة» كانت تُقرأ 0.17
     # وهي 110 كم من 1022 — أي 0.11. والفرق يضلّل من يقرأ التغطية
-    traced_km = sum(_rough_km(traced[i - 1], traced[i])
-                    for i in range(1, len(traced)))
-    total_km = sum(_rough_km(shape[i - 1], shape[i])
-                   for i in range(1, len(shape)))
-
     return round(traced_km / total_km, 3) if total_km > 0 else 0.0
 
 
@@ -251,13 +271,23 @@ async def compute_route(body: RouteIn,
     locations = [{"lat": c.lat, "lon": c.lon} for c in body.locations]
     polys = _closure_polygons(conn) if body.avoid_closures else None
 
-    result = await valhalla.route(locations, costing=body.costing,
-                                  exclude_polygons=polys,
-                                  alternates=body.alternates)
+    result = await valhalla.route(
+        locations, costing=body.costing, exclude_polygons=polys,
+        alternates=body.alternates,
+        avoid={"highways": body.avoid_highways,
+               "tolls": body.avoid_tolls,
+               "ferries": body.avoid_ferries})
 
     trip = result.get("trip", {})
-    fraction = await _attach_edges(trip)
-    trip = _annotate_traffic(conn, trip, fraction)
+    fraction = await _attach_edges(trip, costing=body.costing)
+
+    # الزحام من قراءات السيارات. تلوين مسار مشاة أو دراجة بها يكذب:
+    # رصيف ساحة التحرير ما يزدحم لأن الشارع تحته واقف
+    if body.costing in ("auto", "bus", "motorcycle", "taxi"):
+        trip = _annotate_traffic(conn, trip, fraction)
+    else:
+        trip["traffic"] = {"available": False, "coverage": 0.0,
+                           "matched_fraction": round(fraction, 2)}
 
     out = {"trip": trip, "closures_avoided": len(polys or [])}
 

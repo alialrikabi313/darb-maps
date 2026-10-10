@@ -118,6 +118,9 @@ class ApiClient {
     required List<LatLng> points,
     String costing = 'auto',
     bool avoidClosures = true,
+    bool avoidHighways = false,
+    bool avoidTolls = false,
+    bool avoidFerries = false,
     int alternates = 2,
   }) async {
     final j = await _post('/route', {
@@ -126,6 +129,9 @@ class ApiClient {
       ],
       'costing': costing,
       'avoid_closures': avoidClosures,
+      'avoid_highways': avoidHighways,
+      'avoid_tolls': avoidTolls,
+      'avoid_ferries': avoidFerries,
       'alternates': alternates,
     });
     return j as Map<String, dynamic>;
@@ -186,6 +192,18 @@ class ApiClient {
     if (wayIds.isEmpty) return const [];
     final j = await _get('/traffic/segments', {'way_ids': wayIds.join(',')});
     return (j as List).cast<Map<String, dynamic>>();
+  }
+
+  /// منحنى الزحام بساعات اليوم. الساعة بلا قراءات كافية ترجع null —
+  /// والشاشة ترسمها عموداً باهتاً لا أخضر.
+  Future<({List<double?> hours, int windowDays})> trafficProfile() async {
+    final j = (await _get('/traffic/profile')) as Map<String, dynamic>;
+    return (
+      hours: [
+        for (final v in (j['hours'] as List)) (v as num?)?.toDouble()
+      ],
+      windowDays: (j['window_days'] as num?)?.toInt() ?? 7,
+    );
   }
 
   Future<bool> ping() async {

@@ -7,6 +7,7 @@
 """
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -93,9 +94,24 @@ class TrafficSegment(BaseModel):
 
 
 class RouteIn(BaseModel):
+    # عشر نقاط سقفاً: البداية والنهاية وثماني محطات بينهما. أكثر من ذلك
+    # يخنق ڤالهالا ويطوّل زمن الردّ أكثر مما يحتمله شاشة انتظار
     locations: list[Coord] = Field(min_length=2, max_length=10)
-    costing: str = "auto"
+
+    # نحصر الأنماط بما جرّبناه فعلاً على رسم العراق. القائمة المفتوحة
+    # كانت تمرّر أي نصّ لڤالهالا فيرجع 400 بلغة إنجليزية ما نعرضها
+    costing: Literal["auto", "bus", "bicycle", "pedestrian",
+                     "motorcycle", "taxi"] = "auto"
+
     # هل نتجنّب الإغلاقات المبلَّغ عنها. نتركها خياراً لأن الإغلاق قد يكون
     # خاطئاً، والمستخدم العارف بطريقه يبي يراه على كل حال
     avoid_closures: bool = True
+
+    # تفضيلات المسار. ڤالهالا ما عنده «امنع» بل «رغبة» بين 0 و1، فالتجنّب
+    # عندنا = رغبة صفر: يسلكه فقط إذا ما في بديل إطلاقاً. وهذا هو المطلوب
+    # — منعٌ قاطع يرجّع «ما في طريق» لمن يسكن على طريق سريع
+    avoid_highways: bool = False
+    avoid_tolls: bool = False
+    avoid_ferries: bool = False
+
     alternates: int = Field(default=2, ge=0, le=3)

@@ -12,6 +12,8 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+
+import 'theme.dart';
 import 'package:maplibre_gl/maplibre_gl.dart';
 
 import '../reports/reports.dart';
@@ -38,6 +40,7 @@ const Map<String, IconData> _poiIcons = {
   'bank': Icons.account_balance,
   'hotel': Icons.hotel,
   'park': Icons.park,
+  'parking': Icons.local_parking,
   'car_service': Icons.car_repair,
   'government': Icons.account_balance_outlined,
   'transport': Icons.directions_bus,
@@ -63,7 +66,7 @@ Future<void> registerMapImages(
     await c.addImage(
       poiImageName(e.key),
       await _renderPin(e.value, Colors.white, devicePixelRatio,
-          iconColor: const Color(0xFF0F1A16)),
+          iconColor: D.text),
     );
   }
 
@@ -147,8 +150,8 @@ Future<Uint8List> _renderDestination(double dpr) async {
 
   canvas.drawPath(tailPath, Paint()..color = Colors.white);
   canvas.drawCircle(c, r - 1, Paint()..color = Colors.white);
-  canvas.drawPath(tailPath, Paint()..color = const Color(0xFF0C1512));
-  canvas.drawCircle(c, r - 4, Paint()..color = const Color(0xFF0C1512));
+  canvas.drawPath(tailPath, Paint()..color = D.ink);
+  canvas.drawCircle(c, r - 4, Paint()..color = D.ink);
   canvas.drawCircle(c, r - 10, Paint()..color = Colors.white);
 
   return _toPng(recorder, w, h);
@@ -167,7 +170,7 @@ Future<Uint8List> _renderCar(double dpr) async {
 
   // هالة شفافة حول السهم: تفصله عن الطريق الأبيض تحته
   canvas.drawCircle(c, logical * 0.46,
-      Paint()..color = const Color(0x332D7FF9));
+      Paint()..color = D.locationHalo);
 
   // السهم يشير لأعلى، وMapLibre يدوّره بزاوية الاتجاه
   final arrow = Path()
@@ -184,7 +187,7 @@ Future<Uint8List> _renderCar(double dpr) async {
         ..style = PaintingStyle.stroke
         ..strokeWidth = 4
         ..strokeJoin = StrokeJoin.round);
-  canvas.drawPath(arrow, Paint()..color = const Color(0xFF2D7FF9));
+  canvas.drawPath(arrow, Paint()..color = D.locationBlue);
 
   return _toPng(recorder, side, side);
 }

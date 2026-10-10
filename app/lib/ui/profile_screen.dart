@@ -89,7 +89,7 @@ class ProfileScreen extends StatelessWidget {
         const _InfoRow(
           icon: Icons.edit_location_alt_outlined,
           title: 'اسم ناقص أو غلط في الخريطة؟',
-          subtitle: '8% فقط من طرق العراق مسمّاة في الخريطة المفتوحة. '
+          subtitle: '9% فقط من طرق العراق مسمّاة في الخريطة المفتوحة. '
               'تحريرها من داخل التطبيق قادم.',
         ),
       ],

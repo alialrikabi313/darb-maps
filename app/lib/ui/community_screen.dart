@@ -264,7 +264,7 @@ class _Offline extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => DCard(
-        color: const Color(0xFFFFF6E2),
+        color: D.noticeBg,
         shadow: const [],
         radius: D.rInner,
         padding: const EdgeInsets.all(16),
@@ -277,11 +277,11 @@ class _Offline extends StatelessWidget {
                         'يحتاج اتصالاً.',
                 textAlign: TextAlign.right,
                 style: const TextStyle(
-                    color: Color(0xFF7A5A14), height: 1.4, fontSize: 13),
+                    color: D.noticeInk, height: 1.4, fontSize: 13),
               ),
             ),
             const SizedBox(width: 10),
-            const Icon(Icons.cloud_off, color: Color(0xFF8A6418)),
+            const Icon(Icons.cloud_off, color: D.noticeIcon),
           ],
         ),
       );

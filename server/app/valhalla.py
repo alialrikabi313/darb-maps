@@ -49,8 +49,21 @@ async def _post(path: str, body: dict, timeout=None) -> dict:
 
 async def route(locations: list[dict], costing: str = "auto",
                 exclude_polygons: list | None = None,
-                alternates: int = 2) -> dict:
+                alternates: int = 2,
+                avoid: dict[str, bool] | None = None) -> dict:
     """يحسب المسار. exclude_polygons هي إغلاقات الطرق من بلاغاتنا."""
+    options: dict = {"maneuver_penalty": 5}
+
+    # «التجنّب» رغبة لا منع: 0.0 تعني اسلكه فقط إذا ما في بديل. المشاة
+    # والدراجة ما عندهم use_highways/use_tolls فنتجاهلها لهم
+    if avoid and costing in ("auto", "bus", "motorcycle", "taxi"):
+        if avoid.get("highways"):
+            options["use_highways"] = 0.0
+        if avoid.get("tolls"):
+            options["use_tolls"] = 0.0
+    if avoid and avoid.get("ferries"):
+        options["use_ferry"] = 0.0
+
     body: dict = {
         "locations": locations,
         "costing": costing,
@@ -59,7 +72,7 @@ async def route(locations: list[dict], costing: str = "auto",
         # نبي أسماء الشوارع في كل مناورة: صياغة الجملة العربية في التطبيق
         # تحتاج الاسم، وبلا manoeuvre instructions نوفّر نطاقاً ما نحتاجه
         # لأننا نصيغ الجمل بأنفسنا
-        "costing_options": {costing: {"maneuver_penalty": 5}},
+        "costing_options": {costing: options},
     }
     if exclude_polygons:
         body["exclude_polygons"] = exclude_polygons

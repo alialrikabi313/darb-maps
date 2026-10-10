@@ -6,6 +6,8 @@
 
 import 'package:flutter/material.dart';
 
+import '../config.dart';
+
 class D {
   D._();
 
@@ -41,16 +43,34 @@ class D {
 
   static const divider = Color(0xFFE4EDE8);
 
-  // حالات المرور. نفس ألوان Cfg.trafficColors كي لا يختلف الخط على
-  // الخريطة عن وسيلة الإيضاح في الشريط
-  static const trafficFree = Color(0xFF35C28E);
-  static const trafficMid = Color(0xFFF5A623);
-  static const trafficHeavy = Color(0xFFF2762B);
-  static const trafficJam = Color(0xFFEF4444);
+  // حالات المرور تُقرأ من Cfg لا تُكتب هنا. كانت منسوخة بقيم أفتح،
+  // فخطّ الزحام على الخريطة يطلع بلون والشريحة اللي تشرحه بلون ثانٍ
+  static final trafficFree = trafficColor('free');
+  static final trafficMid = trafficColor('moderate');
+  static final trafficHeavy = trafficColor('heavy');
+  static final trafficJam = trafficColor('jam');
+
+  static Color trafficColor(String level) =>
+      Color(Cfg.trafficColors[level] ?? Cfg.trafficColors['free']!);
 
   static const danger = Color(0xFFEF4444);
   static const warn = Color(0xFFF59E0B);
   static const info = Color(0xFF3B82F6);
+
+  // شريط التنبيه وصندوق الخطأ. كانت هذه الستة منسوخة بيدها في خمسة
+  // ملفات، فتعديل درجة الأصفر في مكان يترك الباقي خلفه
+  static const noticeBg = Color(0xFFFFF6E2);
+  static const noticeInk = Color(0xFF7A5A14);
+  static const noticeIcon = Color(0xFF8A6418);
+
+  static const errorBg = Color(0xFFFDECEC);
+  static const errorInk = Color(0xFF8E2121);
+  static const errorTint = Color(0xFFFDE7E7);
+
+  /// أزرق نقطة الموقع. ما هو من لوحة التصميم بقصد: هو العرف العالمي
+  /// لـ«أنت هنا»، وصبغه بالنعناعي يخلّيه يذوب في خط المسار
+  static const locationBlue = Color(0xFF2D7FF9);
+  static const locationHalo = Color(0x332D7FF9);
 
   // ── نصف الأقطار ──────────────────────────────────────────────────────────
 
@@ -420,6 +440,268 @@ class DGrabber extends StatelessWidget {
           ),
         ),
       );
+}
+
+/// مبدّل شرائح داخل كبسولة: المختار كبسولة داكنة، كما في «الآن / لاحقاً».
+class DSegmented extends StatelessWidget {
+  final List<String> labels;
+  final int selected;
+  final ValueChanged<int> onPick;
+
+  const DSegmented({
+    super.key,
+    required this.labels,
+    required this.selected,
+    required this.onPick,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: D.cardInner,
+        borderRadius: BorderRadius.circular(D.rPill),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (var i = 0; i < labels.length; i++)
+            GestureDetector(
+              onTap: () => onPick(i),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 160),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
+                decoration: BoxDecoration(
+                  color: i == selected ? D.ink : Colors.transparent,
+                  borderRadius: BorderRadius.circular(D.rPill),
+                ),
+                child: Text(
+                  labels[i],
+                  style: D.body.copyWith(
+                    fontWeight: FontWeight.w700,
+                    color: i == selected ? Colors.white : D.textSoft,
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// دائرة الاختيار في قوائم الخيارات الحصرية (المسارات، أنماط المركبة).
+class DRadio extends StatelessWidget {
+  final bool selected;
+  final double size;
+
+  const DRadio({super.key, required this.selected, this.size = 24});
+
+  @override
+  Widget build(BuildContext context) => Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: selected ? D.green : Colors.transparent,
+          border:
+              Border.all(color: selected ? D.green : D.divider, width: 2),
+        ),
+        child: selected
+            ? Center(
+                child: Icon(Icons.circle,
+                    size: size * 0.33, color: Colors.white))
+            : null,
+      );
+}
+
+/// مصغّرة المسار داخل بطاقة الخيار.
+///
+/// رسم يدوي لا صورة بلاطات: البلاطات تحتاج خريطة ثانية لكل بطاقة، وثلاث
+/// خرائط في ورقة واحدة تأكل الذاكرة وتتأخّر. والخط وحده هو ما يميّز
+/// المسارات عن بعضها في التصميم أصلاً.
+class DRouteThumb extends StatelessWidget {
+  final List<({double lat, double lon})> shape;
+  final bool selected;
+  final double width;
+  final double height;
+
+  const DRouteThumb({
+    super.key,
+    required this.shape,
+    required this.selected,
+    this.width = 92,
+    this.height = 56,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        width: width,
+        height: height,
+        color: selected ? D.mintPale : D.cardInner,
+        child: CustomPaint(
+          painter: _ThumbPainter(shape, selected ? D.green : D.textFaint),
+        ),
+      ),
+    );
+  }
+}
+
+class _ThumbPainter extends CustomPainter {
+  final List<({double lat, double lon})> shape;
+  final Color color;
+
+  _ThumbPainter(this.shape, this.color);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (shape.length < 2) return;
+
+    var minLat = shape.first.lat, maxLat = minLat;
+    var minLon = shape.first.lon, maxLon = minLon;
+    for (final p in shape) {
+      if (p.lat < minLat) minLat = p.lat;
+      if (p.lat > maxLat) maxLat = p.lat;
+      if (p.lon < minLon) minLon = p.lon;
+      if (p.lon > maxLon) maxLon = p.lon;
+    }
+
+    // الهامش يمنع التصاق الخط بالحافة، والمقياس الواحد للمحورين يحفظ
+    // شكل المسار — مقياسان يفلطحان الطريق المستقيم فيصير كل المسارات سواء
+    const pad = 9.0;
+    final spanLat = (maxLat - minLat).abs();
+    final spanLon = (maxLon - minLon).abs();
+    final scale = [
+      spanLon > 0 ? (size.width - pad * 2) / spanLon : double.infinity,
+      spanLat > 0 ? (size.height - pad * 2) / spanLat : double.infinity,
+    ].reduce((a, b) => a < b ? a : b);
+    if (!scale.isFinite) return;
+
+    final cx = size.width / 2, cy = size.height / 2;
+    Offset at(({double lat, double lon}) p) => Offset(
+          cx + ((p.lon - (minLon + maxLon) / 2) * scale),
+          cy - ((p.lat - (minLat + maxLat) / 2) * scale),
+        );
+
+    final path = Path()..moveTo(at(shape.first).dx, at(shape.first).dy);
+    // عيّنة لا كل النقطة: مسار بين محافظتين فيه آلاف النقاط على 92 بكسل
+    final step = (shape.length / 90).ceil();
+    for (var i = step; i < shape.length; i += step) {
+      path.lineTo(at(shape[i]).dx, at(shape[i]).dy);
+    }
+    path.lineTo(at(shape.last).dx, at(shape.last).dy);
+
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = color
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2.6
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round,
+    );
+
+    canvas.drawCircle(at(shape.first), 3.2, Paint()..color = D.textFaint);
+    canvas.drawCircle(at(shape.last), 4.2, Paint()..color = color);
+  }
+
+  @override
+  bool shouldRepaint(_ThumbPainter old) =>
+      old.shape != shape || old.color != color;
+}
+
+/// وسيلة إيضاح ألوان الزحام — تطفو أسفل الخريطة في شاشة الخيارات.
+class DTrafficLegend extends StatelessWidget {
+  const DTrafficLegend({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    const levels = ['jam', 'moderate', 'free'];
+    return DCard(
+      radius: D.rPill,
+      shadow: D.shadowSoft,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (final lv in levels) ...[
+            if (lv != levels.first) const SizedBox(width: 14),
+            Container(
+              width: 9,
+              height: 9,
+              decoration: BoxDecoration(
+                  color: D.trafficColor(lv), shape: BoxShape.circle),
+            ),
+            const SizedBox(width: 6),
+            Text(Cfg.trafficLabels[lv]!,
+                style: D.caption.copyWith(fontWeight: FontWeight.w600)),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// أعمدة ٢٤ ساعة — «أفضل أوقات الانطلاق». العمود الحالي معلَّم.
+class DHourBars extends StatelessWidget {
+  /// شدّة الزحام لكل ساعة بين 0 و1، أو null للساعة التي ما عندنا عنها قراءات.
+  final List<double?> hours;
+  final int highlightHour;
+
+  const DHourBars({
+    super.key,
+    required this.hours,
+    required this.highlightHour,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 92,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          for (var h = 23; h >= 0; h--)
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 1.5),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    Container(
+                      height: 10 + (hours[h] ?? 0) * 62,
+                      decoration: BoxDecoration(
+                        // الساعة بلا قراءات تبقى شبحاً: عمود قصير باهت
+                        // أصدق من عمود أخضر يوحي بأن الطريق سالك
+                        color: hours[h] == null
+                            ? D.divider
+                            : _shade(hours[h]!).withValues(
+                                alpha: h == highlightHour ? 1 : 0.75),
+                        borderRadius: BorderRadius.circular(5),
+                        border: h == highlightHour
+                            ? Border.all(color: D.ink, width: 1.4)
+                            : null,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  static Color _shade(double v) => v < 0.33
+      ? D.trafficFree
+      : v < 0.66
+          ? D.trafficMid
+          : D.trafficJam;
 }
 
 /// شريط البحث العلوي — كبسولة بيضاء، النصّ يميناً والأيقونة يساراً.

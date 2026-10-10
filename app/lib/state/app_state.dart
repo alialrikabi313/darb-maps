@@ -315,12 +315,24 @@ class AppState extends ChangeNotifier {
   Future<void> chooseDestination(Destination d) async {
     onDestinationChosen?.call();
     destination = d;
+    stops = const [];
     previewedPlace = null;
+    cameraMode = CameraMode.free;
+    await recomputeRoute();
+  }
+
+  /// يعيد الحساب بالوجهة والمحطات والتفضيلات الحالية.
+  ///
+  /// طلب واحد يغطّي كل ما يغيّر المسار: تبديل نمط المركبة، إضافة محطة،
+  /// تجنّب طريق سريع. بلاه كان كل واحد منها ينسخ نفس العشرين سطراً.
+  Future<void> recomputeRoute() async {
+    final d = destination;
+    if (d == null) return;
+
     proposed = null;
     alternates = const [];
     routeError = null;
     routing = true;
-    cameraMode = CameraMode.free;
     notifyListeners();
 
     final from = fix?.pos;
@@ -331,8 +343,20 @@ class AppState extends ChangeNotifier {
       return;
     }
 
+    // رمز الطلب: المستخدم يقدر يبدّل النمط مرتين قبل ما يرجع الأول،
+    // فردّ الطلب القديم كان يدهس نتيجة الجديد
+    final token = ++_routeToken;
+
     try {
-      final j = await api.route(points: [from, d.pos]);
+      final j = await api.route(
+        points: [from, ...stops.map((s) => s.pos), d.pos],
+        costing: costing,
+        avoidHighways: avoidHighways,
+        avoidTolls: avoidTolls,
+        avoidFerries: avoidFerries,
+      );
+      if (token != _routeToken) return;
+
       proposed = NavRoute.fromTrip(
         j['trip'] as Map<String, dynamic>,
         closuresAvoided: (j['closures_avoided'] as num?)?.toInt() ?? 0,
@@ -341,25 +365,94 @@ class AppState extends ChangeNotifier {
           .map((a) => NavRoute.fromTrip(a as Map<String, dynamic>))
           .toList();
     } on ApiDown catch (e) {
+      if (token != _routeToken) return;
       // التوجيه يحتاج السيرفر. نقولها صريحة بدل ما نعرض شاشة فارغة —
       // والخريطة والبحث يبقون شغّالين أوفلاين
       routeError = '${e.message} — التوجيه يحتاج اتصالاً، والخريطة والبحث '
           'يشتغلون بلاه';
     } on ApiRejected catch (e) {
+      if (token != _routeToken) return;
       routeError = e.message;
     }
 
+    if (token != _routeToken) return;
     routing = false;
     notifyListeners();
   }
 
   void clearDestination() {
     destination = null;
+    stops = const [];
     proposed = null;
     alternates = const [];
     routeError = null;
     cameraMode = CameraMode.follow;
+    // إبطال أي طلب طائر: رجوعه بعد الإلغاء كان يرجّع ورقة المسار لوجهة
+    // المستخدم ألغاها
+    _routeToken++;
     notifyListeners();
+  }
+
+  // ── المحطات وتفضيلات المسار ──────────────────────────────────────────────
+
+  int _routeToken = 0;
+
+  /// محطات بين الموقع والوجهة، بترتيب المرور.
+  List<Destination> stops = const [];
+
+  /// نمط المركبة. ڤالهالا يسمّيه costing — نُبقي اسمه كما هو كي لا يفترق
+  /// الاسم بين الطبقات
+  String costing = 'auto';
+
+  bool avoidHighways = false;
+  bool avoidTolls = false;
+  bool avoidFerries = false;
+
+  /// سقف المحطات: السيرفر يقبل عشر نقاط، منها البداية والوجهة
+  static const int maxStops = 8;
+
+  Future<void> setCosting(String c) async {
+    if (costing == c) return;
+    costing = c;
+    notifyListeners();
+    await recomputeRoute();
+  }
+
+  Future<void> setAvoid({bool? highways, bool? tolls, bool? ferries}) async {
+    avoidHighways = highways ?? avoidHighways;
+    avoidTolls = tolls ?? avoidTolls;
+    avoidFerries = ferries ?? avoidFerries;
+    notifyListeners();
+    await recomputeRoute();
+  }
+
+  Future<void> addStop(Destination s) async {
+    if (stops.length >= maxStops) {
+      notice = 'أقصى عدد محطات $maxStops';
+      notifyListeners();
+      return;
+    }
+    stops = [...stops, s];
+    notifyListeners();
+    await recomputeRoute();
+  }
+
+  Future<void> removeStop(int index) async {
+    if (index < 0 || index >= stops.length) return;
+    stops = [...stops]..removeAt(index);
+    notifyListeners();
+    await recomputeRoute();
+  }
+
+  Future<void> reorderStops(int oldIndex, int newIndex) async {
+    if (oldIndex < 0 || oldIndex >= stops.length) return;
+    final list = [...stops];
+    final item = list.removeAt(oldIndex);
+    // onReorderItem يسلّم الفهرس مصحَّحاً بعد الحذف، فلا تصحيح هنا
+    list.insert(newIndex.clamp(0, list.length), item);
+    stops = list;
+    notifyListeners();
+    await recomputeRoute();
   }
 
   /// يختار بديلاً فيصير هو الأساسي.

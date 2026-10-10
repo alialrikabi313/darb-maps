@@ -128,6 +128,9 @@ POI_CATEGORIES: dict[str, list[tuple[str, str]]] = {
     "transport": [("aeroway", "terminal"), ("amenity", "bus_station")],
     "hotel": [("tourism", "hotel"), ("tourism", "guest_house")],
     "park": [("leisure", "park"), ("leisure", "garden")],
+    # الموقف وجهة بنفسه في بغداد: من يقصد شارع المتنبي يبحث عن موقف قبل
+    # ما يبحث عن المكتبة. ونعرضه في بطاقة المكان «مواقف قريبة»
+    "parking": [("amenity", "parking")],
 }
 
 # التسمية العربية لكل تصنيف. تدخل فهرس البحث مع كل نقطة كي يشتغل
@@ -153,6 +156,7 @@ POI_CATEGORY_LABELS: dict[str, str] = {
     "transport": "نقل مطار كراج",
     "hotel": "فندق",
     "park": "حديقة متنزه",
+    "parking": "موقف سيارات كراج ركن",
     "car_service": "تصليح سيارات صيانة بنجرچي",
 }
 

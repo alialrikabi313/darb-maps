@@ -16,7 +16,23 @@
 //     ليس الآن
 //   - لا «يميناً» بالتنوين: تُقرأ «يمينَن» في بعض محرّكات النطق
 
+import '../config.dart';
 import 'route_model.dart';
+
+/// يحوّل أرقام النصّ إلى هندية (٠١٢) حسب Cfg.hindiDigits.
+///
+/// المنطوق ما يمرّ من هنا: محرّكات النطق تقرأ «٤٥٠» صحيحاً غالباً لكن
+/// لا نضمنها، والعربية (450) مضمونة. فالتحويل للعرض وحده.
+String hd(String s) {
+  if (!Cfg.hindiDigits) return s;
+
+  const d = ['٠', '١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩'];
+  final out = StringBuffer();
+  for (final c in s.codeUnits) {
+    out.write(c >= 0x30 && c <= 0x39 ? d[c - 0x30] : String.fromCharCode(c));
+  }
+  return out.toString();
+}
 
 /// فعل المناورة مكتوباً — يُعرض في الشريط الأعلى.
 String maneuverTitle(Maneuver m) {
@@ -101,8 +117,8 @@ String maneuverTitle(Maneuver m) {
 /// معلم قرب المناورة، يُستعمل حين لا اسم للشارع.
 ///
 /// ═══ قرارك ═══
-/// 9% فقط من طرق العراق مسمّاة. وقِسنا على خمسة مسارات في خمس مدن:
-/// التعليمات التي فيها اسم شارع 46%، وبإضافة المعالم 83%. فالمعلم نصف
+/// 9% فقط من طرق العراق مسمّاة. وقِسنا على ثماني مسارات في سبع مدن:
+/// التعليمات التي فيها اسم شارع 55%، وبإضافة المعالم 82%. فالمعلم نصف
 /// التعليمات لا زينة.
 ///
 /// وهو أقرب لطريقة العراقي في الدلالة أصلاً: «لفّ يمين عند الجامع»
@@ -269,9 +285,9 @@ String distanceText(double meters) {
 
 /// المسافة مكتوبة — أقصر من المنطوقة لأن المساحة على الشاشة ضيقة.
 String distanceLabel(double meters) {
-  if (meters < 1000) return '${(meters / 10).round() * 10} م';
+  if (meters < 1000) return hd('${(meters / 10).round() * 10} م');
   final km = meters / 1000.0;
-  return km < 10 ? '${km.toStringAsFixed(1)} كم' : '${km.round()} كم';
+  return hd(km < 10 ? '${km.toStringAsFixed(1)} كم' : '${km.round()} كم');
 }
 
 /// الزمن المتبقّي مكتوباً.
@@ -281,12 +297,12 @@ String durationLabel(double seconds) {
   if (seconds < 45) return 'أقل من دقيقة';
 
   final mins = (seconds / 60).round();
-  if (mins < 60) return '$mins دقيقة';
+  if (mins < 60) return hd('$mins دقيقة');
 
   final h = mins ~/ 60;
   final m = mins % 60;
-  if (m == 0) return h == 1 ? 'ساعة' : '$h ساعات';
-  return h == 1 ? 'ساعة و$m دقيقة' : '$h ساعات و$m دقيقة';
+  if (m == 0) return h == 1 ? 'ساعة' : hd('$h ساعات');
+  return hd(h == 1 ? 'ساعة و$m دقيقة' : '$h ساعات و$m دقيقة');
 }
 
 /// وقت الوصول المتوقّع بصيغة 12 ساعة عربية.
@@ -296,7 +312,7 @@ String arrivalLabel(DateTime at) {
   var h = h24 % 12;
   if (h == 0) h = 12;
   final mm = at.minute.toString().padLeft(2, '0');
-  return '$h:$mm $period';
+  return hd('$h:$mm $period');
 }
 
 /// الترتيب العربي حتى العاشر — مخارج الدوّارات ما تزيد عليه عملياً.

@@ -379,7 +379,7 @@ class _NoResults extends StatelessWidget {
               const SizedBox(height: 14),
               const Text('ما لقينا شي بهذا الاسم', style: D.h3),
               const SizedBox(height: 8),
-              // نقول السبب المحتمل لا «لا نتائج» وبس: 8% فقط من طرق
+              // نقول السبب المحتمل لا «لا نتائج» وبس: 9% فقط من طرق
               // العراق مسمّاة في OSM، وهذا أرجح سبب الفشل
               const Text(
                 'جرّب اسم المنطقة أو معلماً قريباً — أسماء الشوارع ناقصة '

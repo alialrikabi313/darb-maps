@@ -13,7 +13,9 @@ import 'package:provider/provider.dart';
 import '../nav/phrases.dart';
 import '../nav/route_model.dart';
 import '../state/app_state.dart';
+import 'route_options_sheet.dart';
 import 'theme.dart';
+import 'trip_planner_screen.dart';
 
 class RouteSheet extends StatelessWidget {
   final VoidCallback onStart;
@@ -89,7 +91,37 @@ class RouteSheet extends StatelessWidget {
                 ),
 
               if (!app.routing && app.proposed != null) ...[
-                const SizedBox(height: 14),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: DChip(
+                        label: modeLabel(app.costing),
+                        icon: modeIcon(app.costing),
+                        onTap: () => showModalBottomSheet<void>(
+                          context: context,
+                          backgroundColor: Colors.transparent,
+                          isScrollControlled: true,
+                          builder: (_) => const RouteOptionsSheet(),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: DChip(
+                        label: app.stops.isEmpty
+                            ? 'أضف محطة'
+                            : 'المحطات (${hd('${app.stops.length}')})',
+                        icon: Icons.add_location_alt_outlined,
+                        selected: app.stops.isNotEmpty,
+                        onTap: () => Navigator.of(context).push<void>(
+                            MaterialPageRoute(
+                                builder: (_) => const TripPlannerScreen())),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
                 DBigButton(
                   label: 'ابدأ الرحلة',
                   subtitle: 'ابدأ رحلتك عبر ${app.destination?.title ?? ''}',
@@ -198,25 +230,39 @@ class _RouteOption extends StatelessWidget {
       border: selected ? Border.all(color: D.mint, width: 2) : null,
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
       onTap: onTap,
+      // ترتيب الصف من اليمين كما في المرئي: الاختيار، ثم الوصف، ثم
+      // الأرقام، ثم مصغّرة الخط في أقصى اليسار
       child: Row(
         children: [
-          // زرّ الاختيار على اليسار — كما في التصميم
-          Container(
-            width: 24,
-            height: 24,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: selected ? D.green : Colors.transparent,
-              border: Border.all(
-                  color: selected ? D.green : D.divider, width: 2),
-            ),
-            child: selected
-                ? const Center(
-                    child: Icon(Icons.circle, size: 8, color: Colors.white))
-                : null,
-          ),
+          DRadio(selected: selected),
 
           const SizedBox(width: 12),
+
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Text(label, style: D.h3),
+                    const SizedBox(width: 6),
+                    Icon(icon, size: 16, color: D.green),
+                  ],
+                ),
+                const SizedBox(height: 2),
+                Text(note,
+                    textAlign: TextAlign.right,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: D.caption),
+                if (route.closuresAvoided > 0)
+                  Text('تجنّبنا ${route.closuresAvoided} إغلاقاً',
+                      style: D.caption.copyWith(color: D.danger)),
+              ],
+            ),
+          ),
+
+          const SizedBox(width: 8),
 
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -225,7 +271,7 @@ class _RouteOption extends StatelessWidget {
                   style: D.num2.copyWith(fontSize: 19)),
               Row(
                 children: [
-                  Text('${route.lengthKm.toStringAsFixed(1)} كم',
+                  Text(hd('${route.lengthKm.toStringAsFixed(1)} كم'),
                       style: D.caption),
                   const SizedBox(width: 4),
                   const Icon(Icons.straighten, size: 12, color: D.textSoft),
@@ -234,31 +280,13 @@ class _RouteOption extends StatelessWidget {
             ],
           ),
 
-          const Spacer(),
+          const SizedBox(width: 10),
 
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Row(
-                children: [
-                  Text(label, style: D.h3),
-                  const SizedBox(width: 6),
-                  Icon(icon, size: 16, color: D.green),
-                ],
-              ),
-              const SizedBox(height: 2),
-              SizedBox(
-                width: MediaQuery.of(context).size.width * 0.42,
-                child: Text(note,
-                    textAlign: TextAlign.right,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: D.caption),
-              ),
-              if (route.closuresAvoided > 0)
-                Text('تجنّبنا ${route.closuresAvoided} إغلاقاً',
-                    style: D.caption.copyWith(color: D.danger)),
+          DRouteThumb(
+            shape: [
+              for (final p in route.shape) (lat: p.latitude, lon: p.longitude)
             ],
+            selected: selected,
           ),
         ],
       ),
@@ -294,7 +322,7 @@ class _ErrorBox extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return DCard(
-      color: const Color(0xFFFDECEC),
+      color: D.errorBg,
       shadow: const [],
       radius: D.rInner,
       padding: const EdgeInsets.all(14),
@@ -304,7 +332,7 @@ class _ErrorBox extends StatelessWidget {
             child: Text(message,
                 textAlign: TextAlign.right,
                 style: const TextStyle(
-                    color: Color(0xFF8E2121), height: 1.4, fontSize: 13)),
+                    color: D.errorInk, height: 1.4, fontSize: 13)),
           ),
           const SizedBox(width: 10),
           const Icon(Icons.error_outline, color: D.danger),

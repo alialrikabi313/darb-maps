@@ -7,3 +7,8 @@ pydantic==2.11.9
 # التوكن: hmac يدوي كان يكفي، لكن pyjwt يعطينا exp و iat مجرَّبين
 pyjwt==2.10.1
 httpx==0.28.1
+
+# الاختبارات. pytest-env يضبط DARB_DEV=1 من tools/pytest.ini — بلاه
+# تموت كل الاختبارات برسالة السرّ المفقود
+pytest>=8.0
+pytest-env>=1.1

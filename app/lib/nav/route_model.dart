@@ -166,9 +166,28 @@ class Maneuver {
   }
 }
 
+/// مرحلة بين محطتين. الرحلة ذات المحطات تُقسَم مراحل، وشاشة التخطيط
+/// تعرض زمن كل محطة ومسافتها — وهي أرقام المرحلة لا أرقام الرحلة كلها.
+class RouteLeg {
+  final double lengthKm;
+  final double timeS;
+
+  /// فهرس آخر نقطة من هذه المرحلة في shape المدموج.
+  final int endShapeIndex;
+
+  const RouteLeg({
+    required this.lengthKm,
+    required this.timeS,
+    required this.endShapeIndex,
+  });
+}
+
 class NavRoute {
   final List<LatLng> shape;
   final List<Maneuver> maneuvers;
+
+  /// مراحل الرحلة. واحدة إن ما في محطات.
+  final List<RouteLeg> legs;
 
   /// الطول بالكيلومترات والزمن بالثواني بلا زحام.
   final double lengthKm;
@@ -190,6 +209,7 @@ class NavRoute {
   NavRoute({
     required this.shape,
     required this.maneuvers,
+    this.legs = const [],
     required this.lengthKm,
     required this.timeS,
     required this.timeWithTrafficS,
@@ -219,6 +239,7 @@ class NavRoute {
 
     final shape = <LatLng>[];
     final maneuvers = <Maneuver>[];
+    final parts = <RouteLeg>[];
 
     for (final legRaw in legs) {
       final leg = legRaw as Map<String, dynamic>;
@@ -245,6 +266,13 @@ class NavRoute {
         maneuvers.add(mv);
         traveled += mv.lengthM;
       }
+
+      final ls = (leg['summary'] as Map<String, dynamic>?) ?? const {};
+      parts.add(RouteLeg(
+        lengthKm: (ls['length'] as num?)?.toDouble() ?? 0.0,
+        timeS: (ls['time'] as num?)?.toDouble() ?? 0.0,
+        endShapeIndex: shape.length - 1,
+      ));
     }
 
     final summary = (trip['summary'] as Map<String, dynamic>?) ?? const {};
@@ -253,6 +281,7 @@ class NavRoute {
     return NavRoute(
       shape: shape,
       maneuvers: maneuvers,
+      legs: parts,
       lengthKm: (summary['length'] as num?)?.toDouble() ?? 0.0,
       timeS: (summary['time'] as num?)?.toDouble() ?? 0.0,
       timeWithTrafficS: (summary['time_with_traffic'] as num?)?.toDouble(),

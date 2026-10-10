@@ -23,10 +23,11 @@ from sqlalchemy.engine import Connection
 
 from .. import roads, valhalla
 from ..db import get_conn
+from ..guards import require_admin
 from ..schemas import TraceIn, TrafficSegment
 from ..settings import (
     TRAFFIC_LEVELS, DEFAULT_FREE_SPEED_KMH, TRAFFIC_MIN_SAMPLES,
-    TRAFFIC_SAMPLE_TTL_MIN, TRACE_TRIM_ENDPOINTS_M,
+    TRAFFIC_SAMPLE_TTL_MIN, TRACE_TRIM_ENDPOINTS_M, TRACE_RETENTION_DAYS,
 )
 
 router = APIRouter(prefix="/traffic", tags=["زحام"])
@@ -172,7 +173,7 @@ async def submit_trace(body: TraceIn,
             "road_candidates": candidates}
 
 
-@router.post("/aggregate")
+@router.post("/aggregate", dependencies=[Depends(require_admin)])
 def aggregate(conn: Connection = Depends(get_conn)) -> dict:
     """يجمّع القراءات الحديثة إلى حالة واحدة لكل قطعة.
 
@@ -270,3 +271,47 @@ def segments(
                            free_speed_kmh=r.free_speed_kmh,
                            samples=r.samples, updated_at=r.updated_at)
             for r in rows]
+
+
+# أقلّ عدد قراءات تُصدَّق عليه ساعة في المنحنى اليومي. تحت هذا الحد
+# نرجّع null لا صفراً: «ما نعرف» غير «سالك»، وعمود أخضر على ساعة بلا
+# قراءات يطلّع السائق خامسة الصبح على وعد كاذب.
+_PROFILE_MIN_SAMPLES = 20
+
+
+@router.get("/profile")
+def profile(conn: Connection = Depends(get_conn)) -> dict:
+    """منحنى الزحام بساعات اليوم — «أفضل أوقات الانطلاق».
+
+    مُجمَّع على كل القراءات لا على منطقة: القراءة عندنا ما تحمل موقعاً
+    أصلاً (way_id وحده)، وهذا وعدُ خصوصية لا نقضه لأجل رسم بياني. فالمنحنى
+    وطنيّ، والواجهة تقوله صراحة بدل ما تكتب اسم مدينة ما نعرفها.
+
+    القيمة = 1 − (متوسط السرعة ÷ السرعة الحرّة) مقصوصة في [0,1]: صفر طريق
+    سالك وواحد واقف. النسبة لا السرعة المطلقة، وإلا طغى الطريق السريع على
+    كل شيء بمجرّد أن سرعته أعلى.
+    """
+    rows = conn.execute(text("""
+        SELECT EXTRACT(HOUR FROM observed_at AT TIME ZONE 'Asia/Baghdad')::int
+                   AS hour,
+               AVG(speed_kmh / NULLIF(free_speed_kmh, 0)) AS ratio,
+               COUNT(*) AS n
+        FROM traffic_sample
+        WHERE observed_at > now() - make_interval(days => :days)
+          AND free_speed_kmh > 0
+        GROUP BY 1
+    """), {"days": TRACE_RETENTION_DAYS}).fetchall()
+
+    hours: list[float | None] = [None] * 24
+    counts = [0] * 24
+    for r in rows:
+        counts[r.hour] = r.n
+        if r.n >= _PROFILE_MIN_SAMPLES and r.ratio is not None:
+            hours[r.hour] = round(max(0.0, min(1.0, 1.0 - float(r.ratio))), 2)
+
+    return {
+        "hours": hours,
+        "samples": counts,
+        "window_days": TRACE_RETENTION_DAYS,
+        "min_samples": _PROFILE_MIN_SAMPLES,
+    }

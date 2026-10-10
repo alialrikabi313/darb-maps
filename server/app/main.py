@@ -18,6 +18,7 @@ from sqlalchemy.engine import Connection
 
 from . import roads, valhalla
 from .auth import register_device
+from .guards import RateLimiter, require_admin
 from .db import get_conn, ping
 from .routers import reports, routing, traffic
 from .schemas import DeviceOut
@@ -38,6 +39,10 @@ app = FastAPI(title="darb", description="باكند تطبيق ملاحة darb",
 
 app.add_middleware(CORSMiddleware, allow_origins=CORS_ORIGINS,
                    allow_methods=["*"], allow_headers=["*"])
+
+# الحدّ بعد CORS: الطلب المحظور لازم يرجع برؤوس CORS وإلا يراه
+# المتصفّح خطأ شبكة غامضاً بدل «طلبات كثيرة»
+app.add_middleware(RateLimiter)
 
 app.include_router(reports.router)
 app.include_router(traffic.router)
@@ -84,7 +89,7 @@ def road_candidates(
             "candidates": roads.promoted(conn, limit)}
 
 
-@app.post("/maintenance/cleanup")
+@app.post("/maintenance/cleanup", dependencies=[Depends(require_admin)])
 def cleanup(conn: Connection = Depends(get_conn)) -> dict:
     """ينظّف البلاغات المنتهية والقراءات القديمة.
 
