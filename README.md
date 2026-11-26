@@ -1,3 +1,5 @@
+> **English summary.** A navigation app for Iraq built on OpenStreetMap data (ODbL), with Arabic voice guidance and user-reported traffic. Not a Waze clone and uses no Waze/Google data. Built so far: Iraq-wide map tiles (106,820 tiles), an Iraq-wide routing graph, 141,412 searchable places (OSM + Overture Maps + street names recovered from addresses), a Flutter app (map, search, routing, navigation; arm64 APK 40.2 MB) and a backend for reports, congestion and closures. Tests: 67 Dart, 45 Python and 29 end-to-end checks. The README below (Arabic) lists, candidly, what has *not* been validated: on-device map performance during navigation, heading accuracy on a real drive, and foreground-service survival on aggressive Android vendors (Xiaomi/Huawei/Oppo). Live traffic is implemented and tested end to end but stays silent until enough users contribute.
+
 # darb — درب
 
 تطبيق ملاحة للعراق على بيانات OpenStreetMap، بتوجيه صوتي عربي وبلاغات
